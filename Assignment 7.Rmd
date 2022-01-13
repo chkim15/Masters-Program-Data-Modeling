@@ -1,0 +1,355 @@
+---
+title: "Assignment 7"
+author: "Chul Hee Kim"
+date: '2021 10 31 '
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+# STEP 0: Function to load or download libraries
+loadLib = function(libName)
+{
+  if(require(libName, character.only=TRUE))
+  {
+    ##cat(libName, "loaded properly\n")
+  } else {
+    cat("Installing", libName, "\n")
+    install.packages(libName)
+    if(require(libName, character.only=TRUE))
+    {
+      cat(libName, "loaded properly\n")
+    } else {
+      stop(c(libName, "not properly installed\n"))
+    }
+  }
+}
+
+libs = c("ggplot2","knitr","MASS","ggpubr","dplyr","tidyverse","faraway", 
+         "rmarkdown", "markdown", "tidyr", "caret","readr","onewaytests","plyr",
+         "lmtest","pander","kableExtra","QuantPsyc","GGally","olsrr","leaps",
+         "ggcorrplot","glmnet")
+
+for (lib in libs)
+{
+  loadLib(lib)
+}
+
+## Helper to get data sets from one location on my R Cloud project
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+```
+
+## Problem 1
+
+a-)
+```{r P1_a}
+CCdata <- getDataSet("Cement Composition.csv")
+f1 <- lm(Y ~ ., data=CCdata)
+summary(f1)
+vif(f1)
+```
+Y = 62.405 + 1.551$X_1$ + 0.510$X_2$ + 0.102$X_3$ - 0.144$X_4$
+
+$R^2$ is very big, and the model is significant but none of the predictor variables 
+are significant with $\alpha$=0.05. VIFs indicate multicollinearity problem.
+
+b-)
+```{r P1_b}
+x <- model.matrix(Y~., CCdata)[,-c(1)]
+y <- CCdata$Y
+RidgeMod <- glmnet(x, y, alpha=0, nlambda=100,lambda.min.ratio=0.0001)
+CvRidgeMod <- cv.glmnet(x, y, alpha=0, nlambda=100,lambda.min.ratio=0.0001)
+
+plot(CvRidgeMod)
+best.lambda.ridge <- CvRidgeMod$lambda.min
+pred.ridge <- coef(CvRidgeMod, s = "lambda.min")
+pred.ridge
+```
+The best $\lambda$ for the ridge regression model is `r round(best.lambda.ridge,4)`
+
+c-)
+```{r P1_c}
+LassoMod <- glmnet(x, y, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+CvLassoMod <- cv.glmnet(x, y, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+plot(CvLassoMod)
+best.lambda.lasso <- CvLassoMod$lambda.min
+pred.lasso <- coef(CvLassoMod, s = "lambda.min")
+pred.lasso
+```
+The best $\lambda$ for the lasso regression model is `r round(best.lambda.lasso,4)`.
+This model gets rid of $X_3$.
+
+d-)
+```{r P1_d}
+EnetMod <- glmnet(x, y, alpha=0.5, nlambda=100,lambda.min.ratio=0.0001)
+CvElasticnetMod <- cv.glmnet(x, y,alpha=0.5,nlambda=100,lambda.min.ratio=0.0001)
+best.lambda.enet <- CvElasticnetMod$lambda.min
+pred.enet <- coef(CvElasticnetMod, s = "lambda.min")
+pred.enet
+```
+The best $\lambda$ for the elastic net model is `r round(best.lambda.enet,4)`
+
+e-)
+```{r P1_e}
+yhat.ridge <- predict(RidgeMod, s = best.lambda.ridge, newx = x)
+yhat.lasso <- predict(LassoMod, s = best.lambda.lasso, newx = x)
+yhat.enet <- predict(EnetMod , s = best.lambda.enet, newx = x)
+sst <- sum((y - mean(y))^2)
+sse.ols<-sum(f1$residuals^2)
+sse.ridge <- sum((y - yhat.ridge)^2)
+sse.lasso <- sum((y - yhat.lasso)^2)
+sse.enet <- sum((y - yhat.enet)^2)
+tbl.sse <- cbind(sse.ols,sse.ridge,sse.lasso,sse.enet)
+kable(tbl.sse, digits=4, align="c", caption="SSE Comparison", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+# R squared
+rsq.ols <- 1 - sse.ols / sst
+rsq.ridge <- 1 - sse.ridge / sst
+rsq.lasso <- 1 - sse.lasso / sst
+rsq.enet  <- 1 - sse.enet  / sst
+tbl.r2 <- cbind(rsq.ols,rsq.ridge,rsq.lasso,rsq.enet)
+kable(tbl.r2, digits=4, align="c", caption="R Squared Comparison", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+SSE is the smallest for the ordinary least squares model (OLS), but the VIFs shown
+in part (a) indicate that there is multicollinearity issue. The optimal model of 
+our selection would be the lasso regression model because it has the next smallest
+SSE, but the elastic net model comes pretty close. The lasso model is also preferred
+over the elastic net model since the lasso model uses one fewer predictor variable.
+
+
+## Problem 2
+
+a-)
+```{r P2_a}
+data(stackloss)
+f2 <- lm(stack.loss ~ ., data=stackloss)
+summary(f2)
+vif(f2)
+```
+$R^2$ is very big, and the model is significant. One predictor variable,
+Acid.Conc., looks not significant, and the VIFs show no multicollinearity problem.
+
+b-)
+```{r P2_b}
+rr.huber <- rlm(stack.loss ~ ., data = stackloss, psi = psi.huber)
+summary(rr.huber)
+```
+
+c-)
+```{r P2_c}
+rr.bisquare <- rlm(stack.loss ~ ., data=stackloss, psi = psi.bisquare)
+summary(rr.bisquare)
+```
+
+d-)
+```{r P2_d1}
+tbl.robust <- cbind(f2$coefficients, rr.huber$coefficients, rr.bisquare$coefficients)
+colnames(tbl.robust) <- c("OLS", "Huber", "Bisquare")
+kable(tbl.robust, digits=4, align="c", caption="OLS vs. Robust Comparison", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+Because the coefficients for OLS are quite different from those for robust regression
+models, especially for Water.Temp, we would use the robust regression models. It is 
+an indication that there exist outliers or high leverage points.
+
+```{r P2_d2, fig.height=4}
+par(mfrow=c(2,2))
+ols_plot_cooksd_chart(f2)
+ols_plot_resid_stud(f2)
+ols_plot_resid_lev(f2)
+ols_plot_resid_stud_fit(f2)
+```
+The four diagnostic plots show that the data point '21' could be an outlier.
+'4' is also identified as an outlier, but we will keep it in the model since
+it is on the border line. Also, the data set is quite small with only 21 points.
+We will also remove '17' for its high leverage.
+
+
+```{r P2_d3}
+stackloss2 <- stackloss[-c(17,21),]
+f2.1 <- lm(stack.loss ~ ., data=stackloss2)
+summary(f2.1)
+
+tbl.robust2 <- cbind(f2.1$coefficients, rr.huber$coefficients, rr.bisquare$coefficients)
+colnames(tbl.robust2) <- c("OLS(New)", "Huber", "Bisquare")
+kable(tbl.robust2, digits=4, align="c", caption="OLS vs. Robust Comparison", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+After removing an outlier and a high leverage point, we find that the new OLS has 
+a lot similar coefficients to those of the robust regression models. 
+
+
+## Problem 3
+
+a-) Linear Regression
+```{r P3_a}
+data(fat)
+fat.data <- fat[,-c(1,3)]
+
+set.seed(1023)
+train.index <- createDataPartition(y = fat.data$siri, p = 0.7, list = FALSE)
+train.set <- fat.data[train.index,]
+test.set <- fat.data[-train.index,]
+
+f3 <- lm(siri ~ ., data=train.set)
+stepwise.result <- ols_step_both_p(f3, pent=0.1, prem=0.05)
+stepwise.result
+
+f3.ols <- lm(siri ~ abdom+free+weight+adipos+biceps+thigh+age+neck, data=train.set)
+summary(f3.ols)
+```
+
+c-) Ridge Regression
+```{r P3_c}
+x3 <- model.matrix(siri~., train.set)[,-c(1)]
+y3 <- train.set$siri
+RidgeMod3 <- glmnet(x3, y3, alpha=0, nlambda=100,lambda.min.ratio=0.0001)
+CvRidgeMod3 <- cv.glmnet(x3, y3, alpha=0, nlambda=100,lambda.min.ratio=0.0001)
+par(mfrow=c(1,1))
+plot(CvRidgeMod3)
+best.lambda.ridge3 <- CvRidgeMod3$lambda.min
+pred.ridge3 <- coef(CvRidgeMod3, s = "lambda.min")
+pred.ridge3
+```
+
+d-) Lasso
+```{r P3_d}
+LassoMod3 <- glmnet(x3, y3, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+CvLassoMod3 <- cv.glmnet(x3, y3, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+plot(CvLassoMod3)
+best.lambda.lasso3 <- CvLassoMod3$lambda.min
+pred.lasso3 <- coef(CvLassoMod3, s = "lambda.min")
+pred.lasso3
+```
+
+e-) Elastic Net
+```{r P3_e}
+EnetMod3 <- glmnet(x3, y3, alpha=0.5, nlambda=100,lambda.min.ratio=0.0001)
+CvElasticnetMod3 <- cv.glmnet(x3, y3,alpha=0.5,nlambda=100,lambda.min.ratio=0.0001)
+plot(CvElasticnetMod3)
+best.lambda.enet3 <- CvElasticnetMod3$lambda.min
+pred.enet3 <- coef(CvElasticnetMod3, s = "lambda.min")
+pred.enet3
+```
+
+f-) Robust Regression
+```{r P3_f}
+rr.huber3 <- rlm(siri ~ ., data = train.set, psi = psi.huber)
+summary(rr.huber3)
+
+rr.bisquare3 <- rlm(siri ~ ., data=train.set, psi = psi.bisquare)
+summary(rr.bisquare3)
+```
+
+g-)
+```{r P3_g}
+xt <- model.matrix(siri~., test.set)[,-c(1)]
+yhat.ridge3 <- predict(RidgeMod3, s = best.lambda.ridge3, newx = xt)
+yhat.lasso3 <- predict(LassoMod3, s = best.lambda.lasso3, newx = xt)
+yhat.enet3 <- predict(EnetMod3, s = best.lambda.enet3, newx = xt)
+yhat.huber <- predict(rr.huber3, test.set)
+yhat.bisquare <- predict(rr.bisquare3, test.set)
+
+y4 <- test.set$siri
+sse.ols3 <- sum(f3.ols$residuals^2)
+sse.ridge3 <- sum((y4 - yhat.ridge3)^2)
+sse.lasso3 <- sum((y4 - yhat.lasso3)^2)
+sse.enet3 <- sum((y4 - yhat.enet3)^2)
+sse.huber <- sum((y4 - yhat.huber)^2)
+sse.bisquare <- sum((y4 - yhat.bisquare)^2)
+
+tbl.sse3 <- cbind(sse.ols3,sse.ridge3,sse.lasso3,sse.enet3,sse.huber,sse.bisquare)
+colnames(tbl.sse3) <- c("OLS","Ridge","Lasso","ENet","Huber","Bisquare")
+kable(tbl.sse3, digits=3, align="c", caption="SSE Comparison", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+The Huber model has the smallest SSE and would be the best candidate for the final
+selection although the Lasso and Bisquare models' performances are also not bad.
+The OLS also has the similar SSE as the Huber, but VIFs shown below indicate 
+multicollinearity issue.
+
+```{r}
+vif(f3.ols)
+```
+
+## Problem 4
+
+a-)
+```{r P4_a}
+MSdata <- getDataSet("Machine Speed.csv")
+f4 <- lm(Y ~ X, data=MSdata)
+summary(f4)
+ei <- f4$residuals
+par(mfrow=c(1,2))
+plot(MSdata$X, ei, xlab="X", ylab="Residuals")
+plot(MSdata$X, ei^2, xlab="X", ylab="Squared Residuals")
+```
+
+The plots above show a megaphone shape, indicating that the error variances 
+increase as X gets larger. But, since the size of the data set is quite small,
+we would also want to check the significance with some formal test.
+
+b-)
+```{r P4_b}
+bptest(f4)
+```
+$H_0$: The error variances are constant. \
+$H_a$: The error variances are not constant. 
+
+The p-value of Breusch-Pagan test is smaller than $\alpha$=0.1, so we conclude
+$H_a$ that the error variances are not constant. It is consistent with what we observed
+with residual plots in part (a).
+
+c-)
+```{r P4_c}
+abs.ei <- abs(ei)
+g1 <- lm(abs.ei ~ MSdata$X)
+s <- g1$fitted.values
+w1 <- 1/(s^2)
+#use the weights to fit weighted regression model
+g2 <- lm(Y ~ X, weights= w1, data=MSdata)
+summary(g2)
+
+tbl.4c <- data.frame(cbind(f4$coefficients, g2$coefficients))
+colnames(tbl.4c) <- c("Ordinary","Weighted")
+kable(tbl.4c, digits=4, align="c", caption="Ordinary vs. Weighted Least Squares", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+For $\beta_1$, it is almost identical for both models.
+For $\beta_0$, it is changed a little bit but does not appear to be significantly different.
+
+e-)
+```{r P4_e}
+tbl.4e <- data.frame(cbind(summary(f4)$coefficients[,2], summary(g2)$coefficients[,2]))
+colnames(tbl.4e) <- c("Ordinary","Weighted")
+kable(tbl.4e, digits=4, align="c", caption="Standard Deviations of Estimated Coefficients", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+For $\beta_1$, SD is almost identical for both models.
+For $\beta_0$, SD is reduced slightly.
+
+f-)
+```{r P4_f}
+ei2 <- g2$residuals
+abs.ei2 <- abs(ei2)
+g3 <- lm(abs.ei2 ~ MSdata$X)
+s2 <- g3$fitted.values
+w2 <- 1/(s2^2)
+#use the weights to fit weighted regression model
+g4 <- lm(Y ~ X, weights= w2, data=MSdata)
+summary(g4)
+
+tbl.4f <- data.frame(cbind(f4$coefficients, g2$coefficients, g4$coefficients))
+colnames(tbl.4f) <- c("Ordinary","Weighted1","Weighted2")
+kable(tbl.4f, digits=4, align="c", caption="Ordinary vs. Weighted Least Squares", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+There is no substantial change in the estimated regression coefficients from the first
+weighted least squares model. In fact, it is almost the same. If there were a big change,
+we should iterate the previous steps until the estimates of coefficients converge. But,
+here there is no need for iteration since it seems to be already converged.

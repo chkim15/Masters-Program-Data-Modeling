@@ -1,0 +1,647 @@
+---
+title: "Assignment 10"
+author: "Chul Hee Kim"
+date: '2021 11 23 '
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+knitr::opts_chunk$set(ECHO=TRUE)
+
+# STEP 1: Function to load or download libraries
+loadLib = function(libName)
+{
+    if(require(libName, character.only=TRUE))
+    {
+        ##cat(libName, "loaded properly\n")
+    } else {
+        cat("Installing", libName, "\n")
+        install.packages(libName)
+        if(require(libName, character.only=TRUE))
+        {
+            cat(libName, "loaded properly\n")
+        } else {
+            stop(c(libName, "not properly installed\n"))
+        }
+    }
+}
+
+libs = c("ggplot2", "knitr", "MASS", "car", "onewaytests", "olsrr","ggpubr","dplyr", "Hmisc", "faraway","forecast", 
+         "rmarkdown", "markdown", "tidyr", "caret","kableExtra", "rpart", "rpart.plot", "lmtest", "Metrics","kernlab",      
+         "GGally","visdat","e1071","adabag", "vcd", "randomForest","ggcorrplot","mboost","party","neuralnet",
+         "HoRM","Hmisc","orcutt")
+
+for (lib in libs)
+{
+    loadLib(lib)
+}
+
+## Helper to get data sets from one location on hard drive
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+## Helper to display regression function with n coefficients
+## If var.names = TRUE add a space and "*" symbol to make readable
+dispRegFunc <- function(reg, var.names=FALSE, pdfWrap=0, signif=6) {
+
+  ## Set the line wrapping only if this is being knit as a pdf
+  line.limit <- 0
+  if (!is.null(knitr::current_input())) {
+    if("pdf_document" %in% rmarkdown::all_output_formats(knitr::current_input())) {
+       line.limit <- pdfWrap
+    }
+  }
+  ## Check to see if this is a cv.glmnet object or a lm or rlm object
+  ifelse(class(reg) == "cv.glmnet",
+         coefs <- predict(reg, s=reg$lambda.min, type="coefficients")[,1],
+         coefs <- reg$coefficients)
+  
+  b0 = coefs[1]
+  n <- length(coefs)
+  my_formula <- paste0("Y = ", round(b0, digits = signif))
+  for (i in 2:n) {
+    ## Choose the +/- sign for the coefficient then remove it using abs()
+    new.formula.term <- paste0(ifelse(coefs[i] < 0," - "," + "),
+                         signif(abs(coefs[i]),signif),
+                         ifelse(var.names,paste0(" * ",names(coefs)[i]),
+                         names(coefs)[i]))
+    if (line.limit > 0) {
+      if (line.limit <= nchar(my_formula) + nchar(new.formula.term)) {
+        print(my_formula)
+        my_formula <- new.formula.term
+      } else {
+        my_formula <- paste0(my_formula, new.formula.term)
+      }
+    }
+    else {
+      my_formula <- paste0(my_formula, new.formula.term)
+    }
+  }
+  print(my_formula)
+}
+
+## Helper function to calculate R2, RMSE, and MAE using the 1-SSE/SST method of R2
+## instead of the postResample() method of squaring the correlation coefficient.
+resampleMetrics <- function(pred, obs) {
+	t(c(R2=caret::R2(pred, obs, formula = "traditional"),postResample(pred,obs)[-2]))
+}
+set.seed(123)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+
+## Function to calculate the optimal Cp for pruning
+getBestCp <- function(full_tree) {
+  ## Get the cp (complexity parameter) table for the full tree
+  cptable <- full_tree$cptable
+  nsplit <- nrow(cptable)
+  ## Get the minimum value of xerror (we want to choose the xerror within 1 STD 
+  ## of the minimum xerror with the the lowest nsplit value)
+  min.xerror <- which.min(full_tree$cptable[, 4]) 
+  for(i in 1:nsplit) {
+    ## Return the first value within 1 STD of the minimum xerror,
+    ## which will have the lowest nsplit due loop order
+    if(cptable[i, 4] < cptable[min.xerror, 4] + cptable[min.xerror, 5]) return(cptable[i, 1])
+  }
+  ## Didn't find anything, return the full tree
+  return(cptable[nsplit, 1])
+}
+```
+
+## Problem 1
+
+a-)
+Out of 97 total observations, two predictors, \emph{benign.prostatic.hyperplasia} and 
+\emph{capsular.penetration} have too many zeros. We need to first examine what these mean.
+Roughly 45% of 97 observations are zero for the two variables, so we may be tempted 
+to completely ignore these two. But, a little bit of research showed that having 0
+for those two metrics is common, especially for healthy men. Therefore, we will
+leave them as is in our dataset and start analyzing. The correlation matrix shows 
+a few important variables, and we will use the best subset and stepwise both regression 
+to find our model.
+```{r P1_a}
+prostate <- getDataSet("Prostate Cancer.csv")
+str(prostate)
+head(prostate)
+apply(prostate,2,function(x) sum(is.na(x))) # check any missing data
+apply(prostate,2,function(x) sum(x==0)) # check zeros
+
+corr <- round(cor(prostate),2)
+ggcorrplot(corr, type="lower", lab=TRUE)
+
+set.seed(567)
+train.index <- sample(nrow(prostate), 65)
+train.set <- prostate[train.index,]
+test.set <- prostate[-train.index,]
+
+f1 <- lm(PSA.level ~ ., data = train.set)
+summary(f1)
+
+k1 <- ols_step_best_subset(f1)
+k1
+plot(k1)
+
+ols_step_both_p(f1, prem=0.05)
+```
+
+The best subset regression shows that the choice could be Model 4 with \emph{Cancer.volume, Weight, Age, Capsular.penetration}. But, using these four predictors results in a negative $R^2$ when assessed with
+the test set. The reason is that the OLS regression function has a negative beta for \emph{Age}, so 
+when the model is tested on the test set, many predicted PSA levels became negative and totally different
+from the observed values. We go back to the best subset regression summary and see that Model 4 has 
+only a marginal advantage over Model 2 and 3. Our final choice is Model 2 because it is simpler
+and performs just as well. The stepwise both regression also confirms our choice.
+
+```{r P1_a2}
+m2 <- lm(PSA.level~Cancer.volume+Capsular.penetration, data=train.set)
+summary(m2)
+dispRegFunc(m2)
+resampleMetrics(predict(m2, test.set), test.set$PSA.level)
+```
+
+We should check the regression model assumptions and outliers before we talk
+about the model's performance and validity.
+
+```{r fig.height=4}
+f1.1 <- lm(PSA.level ~ Cancer.volume+Capsular.penetration, data = prostate)
+n <- nrow(prostate)
+p <- length(f1.1$coefficients)
+
+outlierTest(f1.1)
+ols_plot_resid_stud_fit(f1.1)
+ols_plot_resid_stud(f1.1)
+cook <- cooks.distance(f1.1)
+plot(cook, ylab="Cooks distance")
+ols_plot_dffits(f1.1)
+hatv <- hatvalues(f1.1)
+plot(hatv, ylab="Leverages",main="Leverages vs Index Plot")
+abline(h=2*p/n)
+plot(f1.1, which=5, col=c("blue"))
+```
+The points 95,96,97 are identified as outliers or at least as very influential points.
+But given a small dataset, it is hard to justify the removal of these points, so
+we will keep them in our dataset and continue.
+
+```{r P1_a3}
+par(mfrow=c(2,2))
+plot(m2)
+vif(m2)
+shapiro.test(m2$residuals)
+```
+
+The residual vs fitted plot and the scale-location plot indicate nonconstant error variances.
+The QQ plot and Shapiro-Wilk test show non-normality. There is no multicollinearity issue.
+Let us try the transformation and see if we can remediate these.
+
+```{r}
+f.full <- lm(PSA.level ~ Cancer.volume+Capsular.penetration, data=prostate)
+bc <- boxcox(f.full,seq(-1,2,0.01))
+best.lambda <-bc$x[which(bc$y==max(bc$y))]
+best.lambda
+
+f1.log <- lm(log(PSA.level) ~ Cancer.volume+Capsular.penetration, data = train.set)
+summary(f1.log)
+par(mfrow=c(2,2))
+plot(f1.log)
+vif(f1.log)
+shapiro.test(f1.log$residuals)
+
+p.ols <- resampleMetrics(exp(predict(f1.log, test.set)), test.set$PSA.level)
+p.ols
+```
+The best $\lambda$ for Box-Cox procedure is 0.11, but since $Y^{0.11}$ transformation
+is complicated, we choose the log transformation, which seem to remediate the problems
+we had. Both constant error variance and normality assumption now hold, and 
+there is no multicollinearity. However, now the performance of the model is poor
+with $R^2$ of less than 10%. With this poor performance, it would not be useful for
+the oncologists to predict PSA levels. We could try Ridge, Lasso, or robust regression
+to mitigate the influence of outliers, but for the sake of this problem, we settle
+with the best subset model and move on.
+
+b-)
+```{r P1_b}
+f.tree <- rpart(PSA.level ~ ., data = train.set)
+f.tree
+f.tree$cptable
+plotcp(f.tree)
+rpart.plot(f.tree, digits=3)
+p.tree <- resampleMetrics(predict(f.tree,test.set), test.set$PSA.level)
+```
+Although the $C_p$ table suggests that we prune the tree since the entire tree falls
+into the minimum 'xerror'+ 1 SE, but by this standard, we prune too much and have
+no tree at all. Therefore, we keep the original tree as is, and it is already a
+simple tree.
+
+The regression tree only considers \emph{Cancer.volume}, and if it is greater than
+or equal to 16.53, PSA level is predicted to be 91.45. When it is less than 4.71,
+PSA level = 8.23, and when greater than or equal to 4.71 and less than 16.53,
+PSA level = 20.82.
+
+c-)
+```{r P1_c}
+table1 <- rbind(p.ols, p.tree)
+rownames(table1) <- c("OLS","Regression Tree")
+kable(table1, digits=3, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+The regression tree performs better and is easier to interpret since it only takes
+into account one variable and also has the plot of the tree. Also, the best regression 
+model is log transformed, which makes it harder to interpret, and interpreting 
+the regression function is more complicated at least for this problem, given such
+a simple regression tree.
+
+d-)
+Neural networks work best when the input data are scaled to a narrow range around zero,
+so we first normalize each column of the dataset. The normalization also leads to
+faster learning and convergence.
+
+```{r P1_d}
+normalize <- function(x) {return((x - min(x)) / (max(x) - min(x)))}
+prostate_norm <- as.data.frame(lapply(prostate, normalize))
+
+train_norm <- prostate_norm[train.index,]
+test_norm <- prostate_norm[-train.index,]
+
+softplus <- function(x) { log(1 + exp(x)) }
+set.seed(567)
+NN <- neuralnet(PSA.level ~ ., data = train_norm, hidden = 4, act.fct = softplus)
+plot(NN)
+NN_result <- compute(NN, test_norm[2:8])
+pred.NN <- NN_result$net.result
+cor(pred.NN, test_norm$PSA.level)
+
+unnormalize <- function(x) {return((x * max(prostate$PSA.level) - min(prostate$PSA.level)) + min(prostate$PSA.level))}
+p.NN <- resampleMetrics(unnormalize(pred.NN), test.set$PSA.level)
+
+# check in-sample performance to see if there's overfitting
+NN_result2 <- compute(NN, train_norm[2:8])
+pred.NN2 <- NN_result2$net.result
+cor(pred.NN2, train_norm$PSA.level)
+
+p.NN2 <- resampleMetrics(unnormalize(pred.NN2), train.set$PSA.level)
+```
+
+ReLU is the most popular activation function, and it is what we also want to use,
+but since it doesn't work with neuralnet() function, we will instead use a smooth
+approximation of ReLU, i.e. softplus. 
+
+For the choice of number of hidden layers and nodes, we first choose just one
+hidden layer, given our small dataset. Four hidden nodes are chosen since it is
+customary to choose between the number of input nodes and that of output nodes, 
+which are 7 and 1 in this case. 
+
+The interpretation of a neural network is very difficult, but based on what we
+see in the plot above, each of the 7 input nodes is sent to each of the hidden nodes
+with different weights and biases. Each hidden node converts these inputs with
+the activation function, which is softplus in our case, and again with different
+weights and bias, they are sent to the single output node, \emph{PSA.level}.
+
+The problem with our model is that it significantly overfits the training data.
+We are already using a small number of hidden nodes, and using only one hidden node
+does not improve the overfitting. We probably need a lot more data to effectively
+use the neural network, so for this problem, there appears not much for us to do.
+
+```{r}
+table1.1 <- rbind(p.NN, p.NN2)
+rownames(table1.1) <- c("Test Data","Training Data")
+kable(table1.1, digits=3, align="c", booktabs=TRUE,caption="Overfitting") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+e-)
+```{r P1_e}
+table2 <- rbind(p.ols, p.tree, p.NN)
+rownames(table2) <- c("OLS","Regression Tree","Neural Network")
+kable(table2, digits=3, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+
+```
+The regression tree is our best model as shown in the table above.
+
+f-)
+In this problem, we covered three models, ordinary least squares regression,
+regression tree, and neural network. Of these three, the neural network is the
+most difficult one to interpret since by nature, this model uses all variables 
+with many weights and biases involved along with the activation function. Between
+the OLS and the regression tree, which one is easier depends on how complicated 
+the regression tree happens to be. Once the regression tree includes too many
+splits it gets harder and harder to interpret while OLS just depends on how many
+variables it uses. As previously mentioned, in this problem, the regression tree
+is very simple and is easier to interpret.
+
+
+## Problem 2
+
+a-)
+```{r P2_a}
+AA <- getDataSet("Advertising Agency.csv")
+str(AA)
+head(AA)
+
+f2 <- lm(Y ~ X, data=AA)
+summary(f2)
+et <- f2$residuals
+dwtest(Y~X, data=AA)
+```
+
+$H_o$: $\rho$ = 0 \
+$H_a$: $\rho$ > 0 
+
+The Durbin-Watson test shows that the p-value is less than $\alpha$=0.01, so
+we reject the null hypothesis. There seems to exist the autocorrelation.
+
+b-)
+```{r P2_b}
+et1 <- Lag(et, shift = 1)
+
+d1 <- sum(na.omit(et1*et))
+d2 <- sum(na.omit(et1^2))
+rho <- d1/d2
+
+Ytnew <- AA$Y - rho * Lag(AA$Y, shift = 1)
+Xtnew <- AA$X - rho * Lag(AA$X, shift = 1)
+
+f2.1 <- lm(Ytnew ~ Xtnew)
+summary(f2.1)
+b0p <- f2.1$coefficients[1]
+b1p <- f2.1$coefficients[2]
+sb0p <- summary(f2.1)$coefficients[1,2]
+sb1p <- summary(f2.1)$coefficients[2,2]
+dwtest(Ytnew ~ Xtnew)
+```
+The Durbin-Watson test result suggest that we fail to reject the null hypothesis, so
+after the first iteration of the Cochrane-Orcutt procedure, the autocorrelation
+seems to be disappeared.
+
+c-)
+```{r P2_c}
+b0 <- b0p / (1-rho)
+b1 <- b1p
+sb0 <- sb0p / (1-rho)
+sb1 <- sb1p
+```
+After the first iteration of the Cochrane-Orcutt:\
+$\hat{Y'}$ = `r round(b0p,3)` + `r round(b1p,3)`X' \
+
+In terms of the original variables:\
+$\hat{Y}$ = `r round(b0,3)` + `r round(b1,3)`X
+
+The coefficients for X and X' are the same, and those for the intercepts are different.
+
+$s(b_0)$ = `r round(sb0,4)` \
+$s(b_1)$ = `r round(sb1,4)`
+
+d-)
+```{r P2_d}
+MSE <- summary(f2.1)$sigma^2
+Xp <- Xtnew
+Xbar.p <- mean(Xp[-1])
+
+X20 <- AA$X[20]
+X21 <- 3.625
+X21p <- X21 - rho * X20
+
+Yhat21 <- b0 + b1 * X21
+Y20 <- AA$Y[20]
+e20 <- Y20 - (b0 + b1 * X20)
+F21 <- Yhat21 + rho*e20
+
+alpha <- 0.01
+n <- length(AA$Y)
+s.pred <- sqrt(MSE*(1 + (1/n) + (X21p - Xbar.p)^2/(sum((Xp[-1] - Xbar.p)^2))))
+s.pred
+pred.L <- F21 - qt(1-alpha/2, df=n-3)*s.pred
+pred.U <- F21 + qt(1-alpha/2, df=n-3)*s.pred
+
+print(paste(100*(1-alpha) ,"percent prediction interval for response at month 21 is:", round(pred.L,4), ",", round(pred.U,4) ))
+```
+Given the staff time in month 21 as 3.625 thousand hours, and given the amount of billings in month 20
+as 278.5 thousand constant dollars, we predict with approximately 99 percent confidence that
+the amount of billings in month 21 will be between 276.98 and 279.73 thousand constant dollars
+
+## Problem 3
+
+a-)
+```{r P3_a}
+hildreth <- function(x,y,rho){
+  n3 <- length(rho)
+  out <- matrix(0, nrow=n3, ncol=2)
+  out[,1] <- rho
+
+  for (i in 1:n3){
+    d <- anova(hildreth.lu(y=y, x=x, rho=rho[i]))
+    out[i,2] <- d$"Sum Sq"[2]
+  }
+  out
+}
+rh <- seq(0.1,1,by=0.01)
+hl <- hildreth(AA$X, AA$Y, rh)
+plot(hl, xlab=expression(rho), ylab="SSE")
+rho3a <- hl[which.min(hl[,2]),][1] 
+
+Ytp <- AA$Y - rho3a * Lag(AA$Y, shift = 1)
+Xtp <- AA$X - rho3a * Lag(AA$X, shift = 1)
+
+f3.1 <- lm(Ytp ~ Xtp)
+summary(f3.1)
+b1.3a <- f3.1$coefficients[2]
+sb1.3a <- summary(f3.1)$coefficients[2,2]
+```
+
+The value of $\rho$ that minimized SSE is `r round(rho3a,2)`.
+The estimated transformed regression function:\
+$\hat{Y'}$ = 54.2435 + 50.4659X'
+
+b-)
+```{r P3_b}
+rho3b <- 1
+Ytp2 <- AA$Y - rho3b*Lag(AA$Y, shift = 1)
+Xtp2 <- AA$X - rho3b*Lag(AA$X, shift = 1)
+f3.2 <- lm(Ytp2 ~ Xtp2 - 1)
+summary(f3.2)
+b1.3b <- f3.2$coefficients[1]
+b0.3b <- mean(AA$Y) - mean(AA$X)*b1.3b
+sb1.3b <- summary(f3.2)$coefficients[1,2]
+```
+
+The first difference procedure uses r = 1, and the estimated transformed regression function is:\
+$\hat{Y'}$ = 50.164X'
+
+c-)
+The Durbin-Watson test results below show that the autocorrelation is successfully remediated
+for both models.
+```{r P3_c}
+dwtest(f3.1) # Hildreth-Lu
+dwtest(f3.2) # First Difference
+```
+
+$H_o$: $\rho$ = 0 \
+$H_a$: $\rho$ > 0 
+
+For both cases, the p-value is greater than $\alpha$=0.01, so we fail to reject 
+the null hypothesis. There seems to be no autocorrelation.
+
+d-)
+```{r P3_d}
+MSE1 <- summary(f3.1)$sigma^2 # Hildreth-Lu
+MSE2 <- summary(f3.2)$sigma^2 # First difference
+
+hild <- c(b1.3a, sb1.3a, rho3a, MSE1)
+fd <- c(b1.3b, sb1.3b, rho3b, MSE2)
+tbl <- data.frame(rbind(hild, fd))
+rownames(tbl) <- c("Hildreth-Lu", "First difference")
+colnames(tbl) <- c("b1", "s{b1}", "r", "MSE")
+
+kable(tbl, digits=4, align="c", 
+      booktabs=TRUE) %>% kable_styling(latex_options="HOLD_position")
+```
+
+Based on the table above, we would choose the Hildreth-Lu since it resulted in 
+smaller MSE and $s{b_1}$.
+
+e-)
+```{r P3_e}
+Xp <- Xtp
+Xbar.p <- mean(Xp[-1])
+
+X20 <- AA$X[20]
+X21 <- 3.625
+X21p <- X21 - rho3a * X20
+
+Yhat21 <- b0 + b1 * X21
+Y20 <- AA$Y[20]
+e20 <- Y20 - (b0 + b1 * X20)
+F21 <- Yhat21 + rho3a * e20
+
+alpha <- 0.01
+n <- length(AA$Y)
+s.pred <- sqrt(MSE1*(1 + (1/n) + (X21p - Xbar.p)^2/(sum((Xp[-1] - Xbar.p)^2))))
+s.pred
+pred.L <- F21 - qt(1-alpha/2, df=n-3)*s.pred
+pred.U <- F21 + qt(1-alpha/2, df=n-3)*s.pred
+
+print(paste(100*(1-alpha) ,"percent prediction interval for response at month 21 is:", round(pred.L,4), ",", round(pred.U,4)))
+```
+Given the staff time in month 21 as 3.625 thousand hours, and given the amount of billings in month 20
+as 278.5 thousand constant dollars, we predict with approximately 99 percent confidence that
+the amount of billings in month 21 will be between 277.07 and 279.79 thousand constant dollars.
+
+
+## Problem 4
+
+a-)
+There are many zeros in the dataset that do not actually make sense. We consider
+these as recording errors and remove them.
+
+```{r P4_a}
+data(pima)
+str(pima)
+head(pima)
+
+# Set 0's to NA since 0 values do not make sense
+pima$diastolic[pima$diastolic == 0] <- NA
+pima$glucose[pima$glucose == 0] <- NA
+pima$triceps[pima$triceps == 0] <- NA
+pima$insulin[pima$insulin == 0] <- NA
+pima$bmi[pima$bmi == 0] <- NA
+pima$test <- as.factor(pima$test)
+apply(pima,2,function(x) sum(is.na(x)))
+pima2 <- na.omit(pima[,-5])
+
+set.seed(456)
+train.index4 <- createDataPartition(y = pima2$test, p = 0.7, list = FALSE)
+train.set4 <- pima2[train.index4,]
+test.set4 <- pima2[-train.index4,]
+
+f.tree4 <- rpart(test ~ ., data=train.set4, method="class")
+rpart.plot(f.tree4, digits=3)
+f.tree4$cptable
+plotcp(f.tree4)
+
+a4.1 <- defaultSummary(data.frame(obs = pima2$test, pred = predict(f.tree4, pima2, type="class")))
+
+f.pruned4 <- prune(f.tree4, cp = getBestCp(f.tree4))
+rpart.plot(f.pruned4, digits=3)
+f.pruned4$cptable
+plotcp(f.pruned4)
+
+a4.2 <- defaultSummary(data.frame(obs = pima2$test, pred = predict(f.pruned4, pima2, type="class")))
+table4 <- rbind(a4.1, a4.2)
+rownames(table4) <- c("Regression Tree","Pruned Regression Tree")
+kable(table4, digits=3, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+The $C_p$ table for the regression tree suggests that we prune the tree, but the
+pruned tree happens to be overly simple and has only one split. The model comparison
+table shows that the normal regression tree actually performs better with higher 
+accuary and kaap when evaluated on the full data. 
+
+b-)
+```{r P4_b}
+set.seed(456)
+bg <- ipred::bagging(test ~ ., data = train.set4, nbagg = 25)
+pred.bg <- predict(bg, pima2)
+b4.1 <- defaultSummary(data.frame(obs = pima2$test, pred = pred.bg))
+
+ctrl <- trainControl(method = "cv", number = 10)
+set.seed(456)
+bgt <- train(form = test ~ .,
+                         data = train.set4,
+                         method = "treebag",
+                         preProcess = c("center", "scale"),
+                         metric="Accuracy",
+                         tuneLength=20,
+                         trControl=ctrl)
+pred.bgt <- predict(bgt, pima2)
+b4.2 <- defaultSummary(data.frame(obs = pima2$test, pred = pred.bgt))
+
+table5 <- rbind(a4.1, a4.2, b4.1, b4.2)
+rownames(table5) <- c("Regression Tree","Pruned Regression Tree","Bagging 1","Bagging 2")
+kable(table5, digits=3, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+We took two different approaches for bagging, both of which performed well with 
+similar accuracy and kappa. The bagging method looks better than the regression tree
+in predicting the diabetes test results.
+
+c-)
+```{r P4_c}
+set.seed(456)
+ctrl <- trainControl(method = "cv", number = 10)
+bst <- train(form = test ~ .,
+            data = train.set4,
+            method = "blackboost",
+            preProcess = c("center", "scale"),
+            metric="Accuracy",
+            trControl=ctrl)
+pred.bst <- predict(bst, pima2)
+c4 <- defaultSummary(data.frame(obs = pima2$test, pred = pred.bst))
+
+table6 <- rbind(a4.1, a4.2, b4.1, b4.2, c4)
+rownames(table6) <- c("Regression Tree","Pruned Regression Tree","Bagging 1","Bagging 2","Boosting")
+kable(table6, digits=3, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+The boosting method performed worse than the bagging, so we still keep the bagging
+model as the best one at this point.
+
+d-)
+```{r P4_d}
+rf <- randomForest(test ~ ., data = train.set4)
+pred.rf <- predict(rf, pima2)
+d4 <- defaultSummary(data.frame(obs = pima2$test, pred = pred.rf))
+
+table7 <- rbind(a4.1, a4.2, b4.1, b4.2, c4, d4)
+rownames(table7) <- c("Regression Tree","Pruned Regression Tree","Bagging 1","Bagging 2","Boosting","Random Forest")
+kable(table7, digits=3, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+The final table shows that the random forest model is also very good at predicting, 
+and the accuracy and kappa are very close to the two bagging models. Strictly based
+on the numbers shown in the table, the fist bagging model shows the best results, 
+but because the difference is very marginal, we will consider both the bagging and
+random forest as the final candidate and do further analysis.

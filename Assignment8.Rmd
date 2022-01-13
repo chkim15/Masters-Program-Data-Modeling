@@ -1,0 +1,267 @@
+---
+title: "Assignment 8"
+author: "Chul Hee Kim"
+date: '2021 11 5 '
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+# STEP 0: Function to load or download libraries
+loadLib = function(libName)
+{
+  if(require(libName, character.only=TRUE))
+  {
+    ##cat(libName, "loaded properly\n")
+  } else {
+    cat("Installing", libName, "\n")
+    install.packages(libName)
+    if(require(libName, character.only=TRUE))
+    {
+      cat(libName, "loaded properly\n")
+    } else {
+      stop(c(libName, "not properly installed\n"))
+    }
+  }
+}
+
+libs = c("ggplot2","knitr","MASS","ggpubr","dplyr","tidyverse","faraway", 
+         "rmarkdown", "markdown", "tidyr", "caret","readr","onewaytests","plyr",
+         "lmtest","pander","kableExtra","QuantPsyc","GGally","olsrr","leaps",
+         "ggcorrplot","glmnet","rpart","rpart.plot","C50","gmodels","visdat")
+
+for (lib in libs)
+{
+  loadLib(lib)
+}
+
+## Helper to get data sets from one location on my R Cloud project
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+```
+
+## Problem 1
+
+a-)
+```{r P1_a}
+data(diabetes)
+x <- diabetes[,-6]
+par(mfrow=c(2,2))
+for (i in 1:18){
+  plot(x[,i], diabetes$glyhb, xlab=colnames(x)[i], ylab="glyhb")
+}
+```
+
+Among the 18 predictors, it seems that only 'stab.glu' has the apparent positive 
+relationship with the response 'glyhb'. We also observe that 'age' or 'frame'
+might have significant relationship, but it is not very clear in the plots.
+
+b-)
+```{r fig.height=3}
+vis_miss(diabetes)
+```
+
+We see that there are a bunch of NAs for 'bp.2s' and 'bp.2d',
+so we remove these two predictors since removing them by rows will result in 
+262 fewer observations, which is 65% of the total observations. Next, we find 
+that there are some remaining NAs, which can be eliminated by \emph{na.omit} function.
+```{r P1_b}
+diabetes2 <- diabetes[,-c(15,16)]
+diabetes2 <- na.omit(diabetes2)
+table(is.na(diabetes2))
+```
+We finally see that there is no more NA in the data.
+
+c-)
+```{r P1_c}
+f1 <- lm(glyhb ~ ., data=diabetes2)
+summary(f1)
+ols_step_both_p(f1, prem=0.05)
+plot(f1$fitted.values, f1$residuals, xlab="Fitted Values", ylab="Residuals")
+```
+'stab.glu', 'chol', 'age', 'ratio', and 'time.ppn' appears to be the most important predictors
+as suggested by the stepwise selection summary above.
+'stab.glu', 'age', and 'time.ppn' are also indicated as the important predictors by
+the linear regression summary. 'stab.glu' appears to be the most important of all.
+
+The residuals against fitted values plot shows that the error variances
+are fairly constant with a few potential outliers. One might argue that
+the variability increases with larger fitted values, but we will leave it
+as is for now and move on to the next.
+
+d-)
+```{r P1_d}
+f.rt <- rpart(glyhb ~ ., data=diabetes2)
+f.rt
+median(diabetes2$glyhb)
+```
+For 'stab.glu < 158', there are 324 observations, and the mean response for them
+is 5.028333. The terminal node is indicated with * on the right-hand side in the
+results shown above, and the node#8 'age < 55.5' is the largest with 205 observations
+and the mean response of 4.598683, which is close to the median of 'glyhb' (4.86).
+
+e-)
+```{r P1_e}
+rpart.plot(f.rt, digits = 3, fallen.leaves = TRUE, type = 3, extra = 101)
+```
+
+The predictor that splits the tree at the top is the most important predictor.
+In our case, 'stab.glu' is the most important, and it splits the data into two
+categories 'stab.glu < 158' and 'stab.glu >= 158'.
+
+f-)
+```{r P1_f}
+yhat.rt <- predict(f.rt, diabetes2)
+ei <- diabetes2$glyhb - yhat.rt
+plot(yhat.rt, ei, xlab="Fitted Values", ylab="Residuals")
+
+MAE <- function(actual, predicted) {mean(abs(actual - predicted))}
+mae1 <- MAE(diabetes2$glyhb, yhat.rt)
+mae2 <- MAE(diabetes2$glyhb, f1$fitted.values)
+
+SSE <- function(actual, predicted) {sum((actual - predicted)^2)}
+sse1 <- SSE(diabetes2$glyhb, yhat.rt)
+sse2 <- SSE(diabetes2$glyhb, f1$fitted.values)
+
+R2 <- function(actual, predicted) {sum((actual - predicted)^2)/((length(actual)-1)*var(actual))}
+rsq1 <- 1-R2(diabetes2$glyhb, yhat.rt)
+rsq2 <- 1-R2(diabetes2$glyhb, f1$fitted.values)
+
+tbl1 <- data.frame(rbind(c(mae1,mae2), c(sse1,sse2), c(rsq1,rsq2)))
+colnames(tbl1) <- c("Regresstion Tree", "Linear Regression")
+rownames(tbl1) <- c("MAE", "SSE", "Rsquared")
+kable(tbl1, digits=3, align="c", caption="Regression Tree vs. Linear Regression", 
+      booktabs=TRUE) %>% kable_styling(latex_options="HOLD_position")
+```
+
+The residuals against the fitted values plot shows the constant error variances and
+looks a little bit better than the one for the linear regression model.
+We would choose the regression tree model over the linear regression model because
+as shown in the table above, MAE and SSE is lower and $R^2$ is higher for the 
+regression tree model.
+
+
+## Problem 2
+
+a-)
+```{r P2_a}
+mush <- getDataSet("Mushroom.csv")
+mush$Class <- as.factor(mush$Class)
+mush$veil.type <- NULL # removed because all the observations are the same.
+mush$stalk.root <- NULL # removed because of too many observations marked as '?'
+# Tried including 'stalk.root' and no difference in the result
+set.seed(1023)
+train.index <- createDataPartition(y = mush$Class, p = 0.9, list = FALSE)
+train.set <- mush[train.index,]
+test.set <- mush[-train.index,]
+```
+
+
+b-)
+```{r P2_b}
+tree.model <- C5.0(train.set[,-1], train.set[,1])
+tree.model
+summary(tree.model)
+```
+The decision tree shown above clearly indicates which sub-tree leads to
+'p'(poisonous) and 'e'(edible).
+
+c-)
+```{r P2_c}
+pred.train <- predict(tree.model, train.set)
+CrossTable(train.set$Class, pred.train, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+```
+The error rate is 0 since the table above shows that the model correctly predicts
+for all the observations of both 'e' and 'p'.
+
+d-)
+```{r P2_d}
+pred.test <- predict(tree.model, test.set)
+CrossTable(test.set$Class, pred.test, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+```
+The model also correctly predicts all the observations in the test data, so the model
+is very stable. 
+
+
+## Problem 3
+
+a-)
+```{r P3_a}
+x <- model.matrix(glyhb~., diabetes2)[,-c(1)]
+y <- diabetes2$glyhb
+RidgeMod <- glmnet(x, y, alpha=0, nlambda=100,lambda.min.ratio=0.0001)
+CvRidgeMod <- cv.glmnet(x, y, alpha=0, nlambda=100,lambda.min.ratio=0.0001)
+plot(CvRidgeMod)
+best.lambda.ridge <- CvRidgeMod$lambda.min
+pred.ridge <- coef(CvRidgeMod, s = "lambda.min")
+pred.ridge
+```
+
+b-)
+```{r P3_b}
+LassoMod <- glmnet(x, y, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+CvLassoMod <- cv.glmnet(x, y, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+plot(CvLassoMod)
+best.lambda.lasso <- CvLassoMod$lambda.min
+pred.lasso <- coef(CvLassoMod, s = "lambda.min")
+pred.lasso
+```
+c-)
+```{r P3_c}
+EnetMod <- glmnet(x, y, alpha=0.5, nlambda=100,lambda.min.ratio=0.0001)
+CvElasticnetMod <- cv.glmnet(x, y,alpha=0.5,nlambda=100,lambda.min.ratio=0.0001)
+best.lambda.enet <- CvElasticnetMod$lambda.min
+pred.enet <- coef(CvElasticnetMod, s = "lambda.min")
+pred.enet
+```
+
+d-)
+```{r P3_d}
+rr.huber <- rlm(glyhb ~ ., data = diabetes2, psi = psi.huber)
+summary(rr.huber)
+
+rr.bisquare <- rlm(glyhb ~ ., data = diabetes2, psi = psi.bisquare)
+summary(rr.bisquare)
+```
+
+e-)
+```{r P3_e}
+yhat.ridge <- predict(RidgeMod, s = best.lambda.ridge, newx = x)
+yhat.lasso <- predict(LassoMod, s = best.lambda.lasso, newx = x)
+yhat.enet <- predict(EnetMod, s = best.lambda.enet, newx = x)
+yhat.huber <- predict(rr.huber, diabetes2)
+yhat.bisquare <- predict(rr.bisquare, diabetes2)
+
+mae.ridge <- MAE(diabetes2$glyhb, yhat.ridge)
+mae.lasso <- MAE(diabetes2$glyhb, yhat.lasso)
+mae.enet <- MAE(diabetes2$glyhb, yhat.enet)
+mae.huber <- MAE(diabetes2$glyhb, yhat.huber)
+mae.bisquare <- MAE(diabetes2$glyhb, yhat.bisquare)
+
+sse.ridge <- SSE(diabetes2$glyhb, yhat.ridge)
+sse.lasso <- SSE(diabetes2$glyhb, yhat.lasso)
+sse.enet <- SSE(diabetes2$glyhb, yhat.enet)
+sse.huber <- SSE(diabetes2$glyhb, yhat.huber)
+sse.bisquare <- SSE(diabetes2$glyhb, yhat.bisquare)
+
+rsq.ridge <- 1-R2(diabetes2$glyhb, yhat.ridge)
+rsq.lasso <- 1-R2(diabetes2$glyhb, yhat.lasso)
+rsq.enet <- 1-R2(diabetes2$glyhb, yhat.enet)
+rsq.huber <- 1-R2(diabetes2$glyhb, yhat.huber)
+rsq.bisquare <- 1-R2(diabetes2$glyhb, yhat.bisquare)
+
+ridge.pf <- c(mae.ridge, sse.ridge, rsq.ridge)
+lasso.pf <- c(mae.lasso, sse.lasso, rsq.lasso)
+enet.pf <- c(mae.enet, sse.enet, rsq.enet)
+huber.pf <- c(mae.huber, sse.huber, rsq.huber)
+bisquare.pf <- c(mae.bisquare, sse.bisquare, rsq.bisquare)
+
+tbl2 <- cbind(tbl1, ridge.pf, lasso.pf, enet.pf, huber.pf, bisquare.pf)
+colnames(tbl2) <- c("Regression Tree","OLS","Ridge","Lasso","ElasticNet","Huber","Bisquare")
+kable(tbl2, digits=3, align="c", caption="Comparison of Model Performance", 
+      booktabs=TRUE) %>% kable_styling(latex_options="HOLD_position")
+```
+The regression tree performs the best, so we would choose it as the final model. 

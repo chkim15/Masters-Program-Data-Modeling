@@ -1,0 +1,324 @@
+---
+title: "Assignment 2"
+author: "Chul Hee Kim"
+date: '2021 9 17 '
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## Problem 1
+
+```{r P1_setup, message=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+library(caret)
+crime_data <- read.csv("/cloud/project/Data/Crime Rate.csv")
+```
+
+a-)
+
+```{r P1_a}
+fit_crime <- lm(Y ~ X, data = crime_data)
+anova(fit_crime)
+```
+
+b-)
+
+```{r P1_b1}
+n <- nrow(crime_data)
+f <- qf(0.95, 1, n-2)
+```
+
+$H_0: \beta_1 = 0$ \newline $H_a: \beta_1 \ne 0$ \newline
+
+ANOVA table above shows $F^*$ = 16.834, and $F(1-\alpha;1,n-2)$ =
+`r round(f,3)`. Since F-statistic is bigger, we conclude $H_a$, and the
+model is significant.
+
+```{r P1_b2}
+summary(fit_crime)
+t <- qt(0.975,n-2)
+```
+
+The summary above shows that the $t^*$ for X is -4.103. The equivalence
+of F test and t test says that $F^*$ = $(t^*)^2$, and it is consistent
+with above results since
+
+$(t^*)^2 = (-4.103)^2 = 16.83 = F^*$.
+
+$F(1-\alpha;1,n-2)$ = `r round(f,3)` \newline $[t(1-\alpha/2;n-2)]^2$ =
+`r round(t^2,3)`
+
+Therefore, we have shown the numerical equivalence of the two test
+statistics and decision rules, which should be the case with
+one-predictor-variable model. The p-values for the two tests are also
+shown in the summary above. The one for t test appears in the row same
+as X and reads 9.57e-05. The one for F test appears at the bottom and
+reads 9.571e-05, and those two p-values are the same.
+
+c-) As the R-squared value in the summary shown in (b) explains, the
+total variation in crime rate is reduced by 17.03% when the percentage
+of high school graduates is introduced into the analysis. This is a
+relatively small reduction because there is a lot of room for more
+reduction by introducing other variables. However, one can still argue
+that the percentage of high school graduates is significant, given its
+small p-value. The point we want to emphasize here is that the model still 
+falls short of predicting the crime rate.
+
+d-)
+
+```{r P1_d}
+b0_full <- fit_crime$coefficients[1]
+b1_full <- fit_crime$coefficients[2]
+
+fit_crime_red <- lm(Y ~ 1, data = crime_data)
+b0_red <- fit_crime_red$coefficients[1]
+```
+
+Full Model: $Y_i = \beta_0 + \beta_1X_i + \epsilon_i =$
+`r round(b0_full,3)` + `r round(b1_full,3)`X + $\epsilon_i$
+
+Reduced Model: $Y_i = \beta_0 + \epsilon_i =$ `r round(b0_red,3)` +
+$\epsilon_i$
+
+e-)
+
+```{r P1_e}
+anova(fit_crime)
+anova(fit_crime_red)
+SSE_F <- anova(fit_crime)$`Sum Sq`[2]
+SSE_R <- anova(fit_crime_red)$`Sum Sq`[1]
+f_stat <- ((SSE_R-SSE_F)/(83-82)) / (SSE_F/82)
+f_gl <- qf(0.95,1,82)
+```
+
+(1) SSE(F) = `r SSE_F`
+(2) SSE(R) = `r SSE_R`
+(3) $df_F$ = n - 2 = 82
+(4) $df_R$ = n - 1 = 83
+(5) $F^* = \frac{SSE(R)-SSE(F)}{df_R-df_F}\div\frac{SSE(F)}{df_F} = \frac{455,273,165-548,736,108}{83-82}\div\frac{548,736,108}{82}$
+    = 16.834
+(6) $F(1-\alpha;df_R-df_F,df_f) = F(0.95;1,82)$ = `r round(f_gl,3)`
+
+f-) Yes, the $F^*$ and the decision rule for the general linear test
+numerically equivalent to those in part a,b as the results above show.
+
+## Problem 2
+
+```{r P2_setup}
+X <- c(4,8,12,16,20)
+```
+
+a-)
+
+```{r P2_a}
+errors <- rnorm(n=5, mean=0, sd=5)
+dat <- data.frame(Y = 20 + 4*X + errors, X = X, e = errors)
+Xh <- 10
+
+fit_p2 <- lm(Y ~ X, data = dat)
+b0_p2 <- fit_p2$coefficients[1]
+b1_p2 <- fit_p2$coefficients[2]
+Yh <- b0_p2 + b1_p2 * Xh
+
+confint <- predict(fit_p2, data.frame(X=Xh), interval = "confidence", level = 0.95)
+
+```
+
+$b_0$ = `r round(b0_p2,4)`\
+$b_1$ = `r round(b1_p2,4)`
+
+$Y_h$ (at $X_h = 10$) = `r round(b0_p2,4)` + `r round(b1_p2,4)` \* 10 =
+`r round(Yh,4)`
+
+95% confidence interval: `r round(confint[2],3)` $\le E(Y_h) \le$
+`r round(confint[3],3)`
+
+b-)
+
+```{r P2_b}
+p2 <- replicate(200, {
+  errors <- rnorm(n=5, mean=0, sd=5)
+  dat_200 <- data.frame(Y = 20 + 4*X + errors, X = X, e = errors)
+  fit_200 <- lm(Y ~ X, data = dat_200)
+  b0_200 <- fit_200$coefficients[1]
+  b1_200 <- fit_200$coefficients[2]
+  conf <- predict(fit_200, data.frame(X=10), interval = "confidence", level = 0.95)
+  
+  out <- c(b0_200, b1_200, conf[1], conf[2], conf[3])
+  out
+})
+p2 <- t(p2)
+p2 <- data.frame(p2)
+colnames(p2) <- c("b0","b1","Yh","lower","upper")
+head(p2)
+```
+
+The results for 200 coefficients, $Y_h$, and lower/upper bounds of
+confidence intervals are stored in the dataframe called 'p2', and its
+first six rows are shown above.
+
+c-)
+
+```{r P2_c}
+hist(p2$b1, breaks = 20, xlim = c(3.0, 5.5), main = "Frequency Distribution of the 200 Estimates of b1", xlab = expression(b[1]))
+
+mean_b1 <- mean(p2[,2])
+sd_b1 <- sqrt(var(p2[,2]))
+
+# Theoretical Expectations
+exp_b1mean <- 4 # coefficient of X in true regression
+exp_b1sd <- sqrt(25 / sum((X - mean(X))^2)) # 25 is given in the problem as variance of E(Y)
+```
+
+Mean of 200 estimates of $b_1$ = `r round(mean_b1,4)`
+
+SD of 200 estimates of $b_1$ = `r round(sd_b1,4)`
+
+Theoretical expectation of mean of $b_1$ = `r exp_b1mean`
+
+Theoretical expectation of SD of $b_1$ = `r round(exp_b1sd,4)`
+
+For both mean and standard deviation, the estimates and the theoretical
+expectations are consistent to each other as the numbers show above.
+
+d-)
+
+```{r P2_d}
+mean_Yh <- mean(p2[,3])
+notYh <- p2 %>% filter(lower > mean_Yh | upper < mean_Yh) %>% count()
+propor <- notYh / nrow(p2)
+```
+
+`r propor*100`% of the 200 confidence intervals for $E(Y_h)$ when
+$X_h = 10$ include $E(Y_h)$, and this result is consistent with
+theoretical expectations as we had constructed 95% confidence intervals.
+
+## Problem 3
+
+```{r P3_setup}
+question3 <- read.csv("/cloud/project/Data/Question3.csv")
+```
+
+a-)
+
+```{r P3_a}
+set.seed(1023)
+train_index <- sort(sample(1:nrow(question3), 400))
+train_set <- question3[train_index,]
+test_set <- question3[-train_index,]
+```
+
+b-)
+
+```{r P3_b}
+N <- nrow(train_set)
+fit_q3 <- lm(Y ~ X, data = train_set)
+b0_q3 <- fit_q3$coefficients[1]
+b1_q3 <- fit_q3$coefficients[2]
+summary(fit_q3)
+f2 <- qf(0.95,1,N-2)
+```
+
+Y = `r round(b0_q3,4)` + `r round(b1_q3,4)`X
+
+Above regression model is significant as the summary shows that
+F-statistic (922.5) is much bigger than $F(1-\alpha;1,n-2)$ =
+`r round(f2,2)`, and p-value is very small.
+
+c-)
+
+```{r P3_c}
+anova(fit_q3)
+SSE.F <- anova(fit_q3)$`Sum Sq`[2]
+f_q3 <- anova(fit_q3)$`Mean Sq`[1] / anova(fit_q3)$`Mean Sq`[2]
+```
+
+d-)
+
+```{r P3_d}
+fit_q3red <- lm(Y ~ 1, data = train_set)
+b0_q3red <- fit_q3red$coefficients[1]
+anova(fit_q3red)
+SSE.R <- anova(fit_q3red)$`Sum Sq`[1]
+```
+
+Full Model: $Y_i = \beta_0 + \beta_1X_i + \epsilon_i =$
+`r round(b0_q3,4)` + `r round(b1_q3,4)`$X_i$ + $\epsilon_i$
+
+Reduced Model: $Y_i = \beta_0 + \epsilon_i =$ `r round(b0_q3red,4)` +
+$\epsilon_i$
+
+ANOVA tables for the full and reduced model show that SSE(R) =
+`r SSE.R` drops significantly to SSE(F) =
+`r SSE.F` when X is introduced to the full model. It
+suggests that $H_a$ holds, and $F^* = \frac{MSR}{MSE}$
+=`r round(f_q3,2)`\> $F(1-\alpha;1,n-2)$ =`r round(f2,2)`, so we
+conclude $H_a$.
+
+e-)
+
+```{r P3_e}
+par(mfrow=c(1,2))
+y_hat <- fit_q3$fitted.values
+resid_q3 <- fit_q3$residuals
+plot(train_set$X, resid_q3, xlab = "X", ylab = "Residuals", main = "Residuals vs X")
+plot(y_hat, resid_q3, xlab = expression(hat(Y)), ylab = "Residuals", main = "Residuals vs Y-hat")
+
+par(mfrow=c(1,2))
+mse <- anova(fit_q3)$`Mean Sq`[2]
+semi_residual <- resid_q3 / sqrt(mse)
+plot(train_set$X, semi_residual, xlab = "X", ylab = "Semistudentized Residuals", main = "Semistudentized Residuals vs X")
+plot(y_hat, semi_residual, xlab = expression(hat(Y)), ylab = "Semistudentized Residuals", main = "Semistudentized Residuals vs Y-hat")
+```
+
+The normal residual plots show unequal variances as the dispersion of
+data points gets wider as X or $\hat{Y}$ increase.
+
+The semistudentized residual plots show that some points are about 4 or
+more standard deviations away, which indicates that they could be
+outliers.
+
+f-)
+
+```{r P3_f}
+train_q3 <- data.frame(obs = train_set$Y, pred = fit_q3$fitted.values)
+defaultSummary(train_q3)
+
+predicted <- predict(fit_q3, test_set)
+test_q3 <- data.frame(obs = test_set$Y, pred = predicted)
+defaultSummary(test_q3)
+```
+
+g-)
+
+```{r P3_g}
+par(mfrow=c(1,2))
+resid_test <- test_q3$obs - test_q3$pred 
+plot(test_set$X, resid_test, xlab = "X", ylab = "Residuals", main = "Residuals vs X")
+plot(test_q3$pred, resid_test, xlab = expression(hat(Y)), ylab = "Residuals", main = "Residuals vs Y-hat")
+
+par(mfrow=c(1,2))
+semi_residual2 <- resid_test / sqrt(mse)
+plot(test_set$X, semi_residual2, xlab = "X", ylab = "Semistudentized Residuals", main = "Semistudentized Residuals vs X")
+plot(test_q3$pred, semi_residual2, xlab = expression(hat(Y)), ylab = "Semistudentized Residuals", main = "Semistudentized Residuals vs Y-hat")
+```
+
+As it was shown the same in the training data, the test dataset also
+show that the variances increase with X and $\hat{Y}$, and the
+semistudentized residuals show that some data points are 4 standard
+deviations away, indicating possible outliers.
+
+h-)
+
+Although we need to be careful, the model suggests that we should
+consider removing outliers in the dataset. If we finally confirm the
+existence of outliers after further analysis, we can remove them and
+will be able to build a better model. The current model seems robust
+because RMSE, R-Squared, and MAE values are consistent between training
+and test datasets. Also, the R-Squared value slightly below 0.7
+indicates that it is a fine model, but there is a possibility to improve
+it by employing other predictor variables.

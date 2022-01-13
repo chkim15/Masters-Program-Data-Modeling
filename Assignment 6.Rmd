@@ -1,0 +1,261 @@
+---
+title: "Assignment 6"
+author: "Chul Hee Kim"
+date: '2021 10 25 '
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+# STEP 0: Function to load or download libraries
+loadLib = function(libName)
+{
+  if(require(libName, character.only=TRUE))
+  {
+    ##cat(libName, "loaded properly\n")
+  } else {
+    cat("Installing", libName, "\n")
+    install.packages(libName)
+    if(require(libName, character.only=TRUE))
+    {
+      cat(libName, "loaded properly\n")
+    } else {
+      stop(c(libName, "not properly installed\n"))
+    }
+  }
+}
+
+libs = c("ggplot2","knitr","MASS","ggpubr","dplyr","tidyverse","faraway", 
+         "rmarkdown", "markdown", "tidyr", "caret","readr","onewaytests","plyr",
+         "lmtest","pander","kableExtra","QuantPsyc","GGally","olsrr","leaps","ggcorrplot")
+
+for (lib in libs)
+{
+  loadLib(lib)
+}
+
+## Helper to get data sets from one location on my R Cloud project
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+```
+
+## Problem 1
+
+```{r}
+data(prostate)
+head(prostate)
+str(prostate)
+f1 <- lm(lpsa ~ ., data=prostate)
+summary(f1)
+```
+
+a-) Backward elimination
+
+We will eliminate the largest p-value among those over 0.05, one at a time.
+```{r P1_a}
+f11 <- update(f1, .~.-gleason)
+summary(f11)
+f12 <- update(f11, .~.-lcp)
+summary(f12)
+f13 <- update(f12, .~.-pgg45)
+summary(f13)
+f14 <- update(f13, .~.-age)
+summary(f14)
+f15 <- update(f14, .~.-lbph)
+summary(f15)
+```
+The model selected by the backward elimination:\
+lpsa = -0.268 + 0.552lcavol + 0.509lweight +0.666svi
+
+Below result confirms the same variables removed by the backward elimination:
+```{r}
+ols_step_backward_p(f1, prem=0.05)
+```
+
+b-) AIC
+```{r P1_b}
+b <- regsubsets(lpsa ~ ., data=prostate)
+rs <- summary(b)
+rs$which
+
+AIC<-97*log(rs$rss/97)+(2:9)*2
+plot(AIC~I(1:8),ylab="AIC",xlab="Number of Predictors")
+which.min(AIC)
+```
+The plot above shows that AIC is minimized when there are 5 predictors, and the table
+suggests that we choose 'lcavol', 'lweight', 'age', 'lbph', and 'svi'.
+
+Below stepwise method confirms the above result.
+```{r}
+step(f1)
+```
+lpsa = 0.951 + 0.566lcavol + 0.424lweight - 0.015age + 0.112lbph + 0.721svi
+
+c-) Adjusted $R_a^2$
+```{r P1_c}
+plot(2:9,rs$adjr2,xlab="Number of Parameters",ylab="Adjusted R Square")
+which.max(rs$adjr2)
+```
+The adjusted $R^2$ is maximized when there are 8 parameters, but the marginal increase
+is very small once the number of parameters reaches 5 or 6.
+
+d-) Mallows $C_p$
+```{r P1_d, fig.height=4}
+plot(2:9,rs$cp,xlab="Number of Parameters",ylab="Cp")
+abline(0,1)
+
+ols_step_best_subset(f1)
+```
+We would choose between the six parameter, five predictor, model (Model 5) including
+'lcavol', 'lweight', 'age', 'lbph', and 'svi', and the model also including
+'pgg45' (Model 6). Model 7 is also below $C_p$=p line, but we prefer the ones
+with fewer predictors. 
+
+Model 5 is the closest to $C_p$=p line and has the smallest AIC, but we would still
+keep Model 6, which has similarly good numbers, as another candidate and 
+take a deeper analysis (i.e. check assumptions) to select the final model.
+
+
+## Problem 2
+
+a-)
+```{r P2_a, fig.height=4.3}
+SENIC <- getDataSet("SENIC.csv")
+SENIC.r <- SENIC[,-c(1,8:9)] # drop 'MedicalSchoolAffiliation' and 'Region'
+
+train.set <- SENIC.r[57:113,]
+test.set <- SENIC.r[1:56,]
+
+par(mfrow=c(2,2))
+dotchart(train.set$Age, xlab="Age")
+dotchart(train.set$InfectionRisk, xlab="InfectionRisk")
+dotchart(train.set$CulturingRatio, xlab="CulturingRatio")
+dotchart(train.set$ChestXRayRatio, xlab="ChestXRayRatio")
+dotchart(train.set$Beds, xlab="Beds")
+dotchart(train.set$AvgDailyCensus, xlab="AvgDailyCensus")
+dotchart(train.set$Nurses, xlab="Nurses")
+dotchart(train.set$AvailableFacilitiesPercent, xlab="AvailableFacilitiesPercent")
+```
+
+We see some outlying data points (e.g. one below 40 for Age, about 800 for Beds/AvgDailyCensus, 
+below 10% for AvailableFacilitiesPercent), but there does not appear to be problematic features in 
+the dot plots. It is notable that the variables like 'Beds', 'AvgDailyCensus', and 'Nurses'
+have data points concentrated on the left-hand side. 'AvailableFacilitiesPercent' almost looks like
+a categorical variable, but it is just due to the fact that there are many hospitals with 
+the similar number of facilities and services.
+
+b-)
+```{r P2_b}
+plot(train.set)
+corr <- round(cor(train.set),2)
+ggcorrplot(corr, type="lower", lab=TRUE)
+```
+
+The following pairs of predictor variables have very strong linear pairwise associations:\
+Beds and AvgDailyCensus: r = 0.99\
+Beds and Nurses: r = 0.91\
+Nurses and AvgDailyCensus: r = 0.90
+
+The following pairs also have quite strong linear pairwise associations:\
+AvailableFacilitiesPercent and Beds: r = 0.76\
+AvailableFacilitiesPercent and AvgDailyCensus: r = 0.73\
+AvailableFacilitiesPercent and Nurses: r = 0.71
+
+c-)
+```{r P2_c}
+f2 <- lm(log(Stay) ~ ., data=train.set)
+ols_step_best_subset(f2)
+Cp <- ols_step_best_subset(f2)[3:5,7]
+p <- c(4,5,6)
+cpp <- data.frame(cbind(Cp, p))
+rownames(cpp) <- c("Model 3","Model 4","Model 5")
+kable(cpp, digits=3, align="c", caption="Cp and p Comparison", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+According to the table above, Model 3, 4, and 5 are the three best subsets for the $C_p$ criterion.
+Among these three subsets, Model 3 appears to have the smallest bias since Model 3
+has $C_p$=3.8112 and p=4. The gap is only 0.1888, and Model 4 and 5 have bigger gaps
+between $C_p$ and p. Also, we want $C_p$ to be small and to be close to p.
+
+d-)
+```{r P2_d}
+f2.train <- lm(log(Stay) ~ Age+ChestXRayRatio+AvgDailyCensus, data=train.set)
+s1 <- summary(f2.train)
+s1
+
+f2.test <- lm(log(Stay) ~ Age+ChestXRayRatio+AvgDailyCensus, data=test.set)
+s2 <- summary(f2.test)
+s2
+
+b1.co <- c(s1$coefficients[2,1], s2$coefficients[2,1])
+b2.co <- c(s1$coefficients[3,1], s2$coefficients[3,1])
+b3.co <- c(s1$coefficients[4,1], s2$coefficients[4,1])
+
+b1.sd <- c(s1$coefficients[2,2], s2$coefficients[2,2])
+b2.sd <- c(s1$coefficients[3,2], s2$coefficients[3,2])
+b3.sd <- c(s1$coefficients[4,2], s2$coefficients[4,2])
+
+tbl1 <- data.frame(rbind(b1.co, b2.co, b3.co))
+rownames(tbl1) <- c("b1","b2","b3")
+colnames(tbl1) <- c("Train","Test")
+
+tbl2 <- data.frame(rbind(b1.sd, b2.sd, b3.sd))
+rownames(tbl2) <- c("b1","b2","b3")
+colnames(tbl2) <- c("Train","Test")
+
+kable(tbl1, digits=5, align="c", caption="Regression Coefficients", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+kable(tbl2, digits=5, align="c", caption="Standard Deviations of Regression Coefficients", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+The estimated regression coefficients and their standard deviations do not differ
+much between the two models. But, for the validation set, the summary shows that 
+the p-value for 'Age' is bigger than 0.05, making it insignificant for 
+the regression model using the validation set whereas it is significant for that
+using the training set.
+
+e-)
+```{r P2_e}
+MSE.train <- anova(f2.train)$`Mean Sq`[4]
+MSE.test <- anova(f2.test)$`Mean Sq`[4]
+tbl3 <- data.frame(MSE.train, MSE.test)
+
+tbl4 <- data.frame(s1$r.squared, s2$r.squared)
+colnames(tbl4) <- c("Rsquared(Train)","Rsquared(Test)")
+
+kable(tbl3, digits=5, align="c", caption="MSE", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+kable(tbl4, digits=5, align="c", caption="Coefficients of Multiple Determination", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+MSEs do not differ much, but $R^2$ is significantly reduced for the validation set compared to
+the training set. Both models are significant, but considering very different $R^2$ and 
+bigger p-value of 'Age' for the model fitted to the validation set, we need a further analysis.
+It could be the case that some other subset model fits better to the validation set.
+
+
+## Problem 3
+
+```{r P3}
+data(teengamb)
+f3 <- lm(gamble ~ ., data=teengamb)
+summary(f3)
+
+stepwise.result <- ols_step_both_p(f3, pent=0.1, prem=0.05)
+stepwise.result
+summary(stepwise.result$model)
+```
+gamble = 4.041 + 5.172income - 21.634sex
+
+We see below that adding 'verbal' or 'status' does not make either variable 
+significant, so the above final model with only 'income' and 'sex' is confirmed
+as the final one, and both variables are significant.
+```{r}
+f3.2 <- lm(gamble ~ income+sex+verbal, data=teengamb)
+summary(f3.2)
+f3.3 <- lm(gamble ~ income+sex+status, data=teengamb)
+summary(f3.3)
+```

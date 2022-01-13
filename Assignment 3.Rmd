@@ -1,0 +1,448 @@
+---
+title: "Assignment 3"
+author: "Chul Hee Kim"
+date: '2021 9 26 '
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r include=FALSE, warning=FALSE, message=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(MASS)) install.packages("MASS", repos = "http://cran.us.r-project.org")
+if(!require(ALSM)) install.packages("ALSM", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+if(!require(onewaytests)) install.packages("onewaytests", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+library(caret)
+library(MASS)
+library(ALSM)
+library(knitr)
+library(kableExtra)
+library(onewaytests)
+```
+
+## Problem 1
+
+a-)
+```{r P1_a}
+PH.data <- read.csv("/cloud/project/Data/Plastic Hardness Data.csv")
+PH.reg <- lm(Y ~ X, data=PH.data)
+ei <- PH.reg$residuals
+plot(PH.reg$fitted.values, ei, xlab="Fitted Values", ylab="Residuals", main="Plastic Hardness Data")
+```
+
+The plot above does not indicate unequal variances, so no departures
+from regression model are evident here.
+
+b-)
+```{r P1_b}
+PHerror.std <- rstandard(PH.reg)
+PHqq <- qqnorm(PHerror.std, xlab="Normal Scores", ylab="Standardized Residuals")
+qqline(PHerror.std, col="steelblue", lwd=2)
+cc <- cor(PHqq$x, PHqq$y) #0.991
+```
+The normality assumption appears to be reasonable as the above normal
+probability plot indicates. The coefficient of correlation between
+residuals and their expected values under normality is `r round(cc,3)`,
+which also supports our claim.
+
+c-)
+```{r P1_c}
+std <- 3.234 #from Residual standard error in summary(PH.reg)
+
+# Expected frequencies
+p25 <- qt(0.25, 14) * std # -2.239
+p50 <- qt(0.5, 14) * std # 0
+p75 <- qt(0.75, 14) * std # 2.239
+
+# Residuals and expected values table
+tbl <- data.frame(residual=ei)
+tbl <- tbl %>% 
+  arrange(residual) %>% 
+  mutate(rank=seq(1,16)) %>%
+  mutate(expected=round(std*qnorm((rank-.375)/(16+.25)),3))  
+
+obs25 <- tbl %>% filter(residual <= p25) %>% count() # 4
+obs50 <- tbl %>% filter(residual <= p50) %>% count() # 7
+obs75 <- tbl %>% filter(residual <= p75) %>% count() # 11
+
+kable(tbl, caption="Residuals and Expected Values under Normality", "latex") %>%
+  kable_styling(position="center", latex_options="hold_position")
+```
+
+| Percentiles | t-value          | Expected Freq. | Observed Freq.     |
+|-------------|------------------|----------------|--------------------|
+| 25th        | `r round(p25,3)` | 4              | `r round(obs25,3)` |
+| 50th        | `r round(p50,3)` | 8              | `r round(obs50,3)` |
+| 75th        | `r round(p75,3)` | 12             | `r round(obs75,3)` |
+
+Since n = 16, the 25th, 50th, and 75th percentiles of the expected
+frequencies under normality are 4, 8, and 12. The t-value for the
+corresponding percentiles are -2.239, 0, and 2.239, and the table above
+shows that the observed frequencies are 4, 7, and 11. The observed and
+expected frequencies are very close to each other, and it is consistent
+with part (b) that the normality assumption holds. Also, the residuals and 
+their expected values under normality are close to each other.
+
+d-)
+
+```{r P1_d}
+# Brown-Forsythe Test
+sep <- data.frame(cbind(PH.data, ei))
+p1 <- sep[sep[,2] <= 24,]
+p2 <- sep[sep[,2] > 24,]
+M1 <- summary(p1[,3])[3]
+M2 <- summary(p2[,3])[3]
+N1 <- dim(p1)[1]
+N2 <- dim(p2)[1]
+
+d1 <- abs(p1[,3]-M1)
+d2 <- abs(p2[,3]-M2)
+s2 <- sqrt((var(d1)*(N1-1)+var(d2)*(N2-1))/(N1+N2-2))
+
+Den <- s2*sqrt(1/N1+1/N2)
+Num <- mean(d1)-mean(d2)
+
+T <- Num/Den # 0.856
+T.crit <- qt(0.995, N1+N2-2) # 2.977
+pvalue <- 2*(1-pt(T, N1+N2-2)) # 0.407
+```
+\newpage
+$H_0$: The error variances are constant. $H_a$: The error variances are
+not constant.
+
+Since $t_{BF}^*$ = `r round(T,3)` $\le$ `r round(T.crit,3)`
+$(\alpha=0.01)$, we conclude $H_0$, so the error variance is constant
+and does not vary with the level of X. The p-value of
+`r round(pvalue,3)` $\ge \alpha=0.01$ also supports our claim. This conclusion is
+consistent with our preliminary findings in part (a).
+
+```{r}
+# Using onewaytests library
+bf.data<-data.frame(cbind(PH.data,PH.reg$residuals,PH.reg$fitted.values))
+dimnames(bf.data)[[2]][3:4]<-c("residuals","fitted.values")
+bf.data1<-data.frame(cbind(bf.data,ind=as.factor(I(bf.data$X<=median(bf.data$X))*1)))
+bf.test(residuals~ind,data=bf.data1)
+```
+The Brown-Forsythe test using 'onewaytests' library gives the same result that
+we conclude $H_0$ although the p-value is different from the one above calculated manually
+as 'onewaytests' uses F-test, rather than t-test.
+
+e-)
+```{r P1_e}
+# Breusch-Pagan Test
+ei2 <- ei^2
+g <- lm(ei2 ~ PH.data$X)
+anova(g)
+anova(PH.reg)
+SSR.S <- anova(g)$`Sum Sq`[1] #66.385
+SSE <- anova(PH.reg)$`Sum Sq`[2] #146.425
+ChiSquare <- (SSR.S/2) / ((SSE/nrow(PH.data))^2) #0.396
+Chi.crit <- qchisq(0.99,1) #6.635
+pvalue2 <- 1- pchisq(ChiSquare,1) #0.529
+```
+$H_0: \gamma_1 = 0$ $H_a: \gamma_1 \ne 0$
+
+Since $\chi_{BP}^2$ = `r round(ChiSquare,3)` $\le$ `r round(T.crit,3)` = 
+$\chi^2(0.99,1)$, we conclude $H_0$, so the error variance is constant.
+The p-value of `r round(pvalue2,3)` $\ge \alpha=0.01$ also supports our claim. This
+conclusion is consistent with our preliminary findings in part (a).
+
+## Problem 2
+
+a-)
+
+```{r P2_a}
+SG.data <- read.csv("/cloud/project/Data/Sales Growth Data.csv")
+
+band1 <- subset(SG.data, -0.5<X & X<1.5)
+band2 <- subset(SG.data, 1.5<X & X<3.5)
+band3 <- subset(SG.data, 3.5<X & X<5.5)
+band4 <- subset(SG.data, 5.5<X & X<7.5)
+band5 <- subset(SG.data, 7.5<X & X<9.5)
+
+median.X <- c(median(band1$X),median(band2$X),median(band3$X),median(band4$X),median(band5$X))
+median.Y <- c(median(band1$Y),median(band2$Y),median(band3$Y),median(band4$Y),median(band5$Y))
+
+plot(SG.data$X, SG.data$Y, xlab="X", ylab="Y", main="Sales Growth Data")
+lines(median.X, median.Y)
+```
+
+Although there is a slight kink at around X=6.5, the band smooth
+suggests that the regression relation is mostly linear.
+
+b-)
+
+```{r P2_b}
+band1.1 <- subset(SG.data, -0.5<X & X<2.5)
+band2.1 <- subset(SG.data, 0.5<X & X<3.5)
+band3.1 <- subset(SG.data, 1.5<X & X<4.5)
+band4.1 <- subset(SG.data, 2.5<X & X<5.5)
+band5.1 <- subset(SG.data, 3.5<X & X<6.5)
+band6.1 <- subset(SG.data, 4.5<X & X<7.5)
+band7.1 <- subset(SG.data, 5.5<X & X<8.5)
+band8.1 <- subset(SG.data, 6.5<X & X<9.5)
+
+fit1 <- lm(Y ~ X, data=band1.1)
+fit2 <- lm(Y ~ X, data=band2.1)
+fit3 <- lm(Y ~ X, data=band3.1)
+fit4 <- lm(Y ~ X, data=band4.1)
+fit5 <- lm(Y ~ X, data=band5.1)
+fit6 <- lm(Y ~ X, data=band6.1)
+fit7 <- lm(Y ~ X, data=band7.1)
+fit8 <- lm(Y ~ X, data=band8.1)
+
+M1X <- median(band1.1$X)
+M2X <- median(band2.1$X)
+M3X <- median(band3.1$X)
+M4X <- median(band4.1$X)
+M5X <- median(band5.1$X)
+M6X <- median(band6.1$X)
+M7X <- median(band7.1$X)
+M8X <- median(band8.1$X)
+
+Y1 <- predict(fit1,data.frame(X=M1X))
+Y2 <- predict(fit2,data.frame(X=M2X))
+Y3 <- predict(fit3,data.frame(X=M3X))
+Y4 <- predict(fit4,data.frame(X=M4X))
+Y5 <- predict(fit5,data.frame(X=M5X))
+Y6 <- predict(fit6,data.frame(X=M6X))
+Y7 <- predict(fit7,data.frame(X=M7X))
+Y8 <- predict(fit8,data.frame(X=M8X))
+
+Xc <- c(M1X,M2X,M3X,M4X,M5X,M6X,M7X,M8X)
+Yc_hat <- c(Y1,Y2,Y3,Y4,Y5,Y6,Y7,Y8)
+
+plot(SG.data$X, SG.data$Y, xlab="X", ylab="Y", main="Sales Growth Data")
+lines(Xc, Yc_hat)
+```
+
+c-)
+
+```{r P2_c}
+true.reg <- lm(Y ~ X, data=SG.data)
+bd<-predict(true.reg,SG.data,se.fit=TRUE)
+
+W=sqrt(2*qf(0.95,2,bd$df))
+
+CB_lower<-bd$fit-W*bd$se.fit
+CB_upper<-bd$fit+W*bd$se.fit
+dat<-data.frame(X=SG.data$X,CB_lower,CB_upper)
+
+plot(SG.data$X, SG.data$Y, xlab="X", ylab="Y", main="Sales Growth Data")
+lines(Xc, Yc_hat)
+lines(dat$X,dat$CB_lower,lty=1,lwd=2, col="steelblue")
+lines(dat$X,dat$CB_upper,lty=1,lwd=2, col="steelblue")
+```
+
+The simplified lowess smooth falls entirely within the confidence band
+for the regression line, and it shows that the linear regression is
+appropriate.
+
+## Problem 3
+
+a-)
+
+```{r P3_a}
+PT.data <- read.csv("/cloud/project/Data/Production Time.csv")
+plot(PT.data$X, PT.data$Y, xlab="X", ylab="Y", main="Production Time Data")
+```
+
+A linear relation does not seem adequate here since the scatter plot
+above shows a curvilinear shape. The transformation on X would be more
+appropriate in case of nonlinear relation, which is the case here. In
+particular, 'log' or 'square root' transformation seems appropriate,
+given the pattern of the scatter plot. 
+
+b-)
+
+```{r P3_b}
+trans.X <- sqrt(PT.data$X)
+trans.PT.data <- data.frame(cbind(PT.data, trans.X))
+trans.PT.reg <- lm(Y ~ trans.X, data=trans.PT.data)
+b0.p3 <- trans.PT.reg$coefficients[1]
+b1.p3 <- trans.PT.reg$coefficients[2]
+summary(trans.PT.reg)
+```
+
+The estimated linear regression function for the transformed data: \newline
+$X'$ = $\sqrt{X}$ \newline
+Y = `r round(b0.p3,3)` + `r round(b1.p3,3)`$X'$
+
+c-)
+
+```{r P3_c}
+plot(trans.PT.data$trans.X, trans.PT.data$Y, xlab=expression(sqrt(X)), ylab="Y",
+     main="(Transformed) Production Time Data")
+abline(trans.PT.reg)
+```
+
+The regression line appear to be a good fit to the transformed data as
+the plot above shows.
+
+d-)
+
+```{r P3_d, fig.height=3.5}
+par(mfrow=c(1,2))
+ei.p3 <- trans.PT.reg$residuals
+fitted.p3 <- trans.PT.reg$fitted.values
+plot(fitted.p3, ei.p3, xlab="Fitted Values", ylab="Residuals", main="(Transformed) Production Time Data", cex.main=0.7)
+
+PTerror.std <- rstandard(trans.PT.reg)
+qqnorm(PTerror.std, xlab="Normal Scores", ylab="Standardized Residuals")
+qqline(PTerror.std, col="steelblue", lwd=2)
+```
+
+The residuals vs. fitted values plot on the left shows no noticeable
+pattern, so the error terms seem to have constant variances. The normal
+probability plot on the right shows that it is approximately normally
+distributed.
+
+e-) Y = `r round(b0.p3,3)` + `r round(b1.p3,3)`$\sqrt{X}$
+
+## Problem 4
+
+a-)
+
+```{r P4_a}
+# SG.data and true.reg already exist from P2
+plot(SG.data$X, SG.data$Y, xlab="X", ylab="Y", main="Sales Growth Data")
+par(mfrow=c(1,2))
+boxcox(true.reg, lambda=seq(-1,2,by=.1))
+
+# Evaluate SSE
+boxcox.sse(SG.data$X, SG.data$Y, l=seq(.3,.7,by=.1))
+```
+
+The scatter plot shows that a linear relation appears adequate, but the
+Box-Cox plot indicates $\lambda = 0.5$, which means the square root
+transformation of Y is suggested. The table above also shows that SSE is
+minimized when $\lambda = 0.5$. We can infer from this fact needing the
+transformation of Y that either the error terms do not have constant variances,
+or it is not normally distributed.
+
+b-)
+
+```{r P4_b}
+trans.Y <- sqrt(SG.data$Y)
+trans.SG.data <- data.frame(SG.data, trans.Y)
+trans.SG.reg <- lm(trans.Y ~ X, data=trans.SG.data)
+b0.p4 <- trans.SG.reg$coefficients[1] #10.261
+b1.p4 <- trans.SG.reg$coefficients[2] #1.076
+summary(trans.SG.reg)
+```
+
+The estimated linear regression function for the transformed data: \newline
+$Y'$ = $\sqrt{Y}$ \newline
+$Y'$ = `r round(b0.p4,3)` + `r round(b1.p4,3)`X
+
+c-)
+
+```{r P4_c, fig.height=10}
+par(mfrow=c(3,2))
+# Regression lines
+plot(SG.data$X, SG.data$Y, xlab="X", ylab="Y", main="Sales Growth Data")
+abline(true.reg)
+
+plot(trans.SG.data$X, trans.SG.data$trans.Y, xlab="X", ylab=expression(sqrt(Y)),
+     main="(Transformed) Sales Growth Data")
+abline(trans.SG.reg)
+
+# Residuals vs. fitted values
+ei.p41 <- true.reg$residuals
+fitted.p41 <- true.reg$fitted.values
+plot(fitted.p41, ei.p41, xlab="Fitted Values", ylab="Residuals", main="Sales Growth Data")
+
+ei.p42 <- trans.SG.reg$residuals
+fitted.p42 <- trans.SG.reg$fitted.values
+plot(fitted.p42, ei.p42, xlab="Fitted Values", ylab="Residuals", 
+     main="(Transformed) Sales Growth Data")
+
+# QQ plot
+SGerror.std1 <- rstandard(true.reg)
+qqnorm(SGerror.std1, xlab="Normal Scores", ylab="Standardized Residuals", 
+       main="QQ Plot - Sales Growth Data")
+qqline(SGerror.std1, col="steelblue", lwd=2)
+
+SGerror.std2 <- rstandard(trans.SG.reg)
+qqnorm(SGerror.std2, xlab="Normal Scores", ylab="Standardized Residuals", 
+       main="QQ Plot - (Transformed) Sales Growth Data")
+qqline(SGerror.std2, col="steelblue", lwd=2)
+```
+
+The scatter plots on the top indicate that both the original and
+transformed data appear to be a good fit to the corresponding linear
+regression although the transformed model has a better fit.
+
+The residuals vs. fitted values plots in the middle indicate that the
+variances of error terms are not constant in the original data whereas
+those seem constant in the transformed data.
+
+The normal probability plots on the bottom indicate that both the
+original and transformed data are approximately normally distributed,
+but we can notice a slightly curvy shape in the plot of the original
+data.
+
+d-) $\sqrt{Y}$ = `r round(b0.p4,3)` + `r round(b1.p4,3)`X
+
+## Problem 5
+
+a-)
+
+```{r P5_a}
+X <- c(5,8,11,7,13,12,12,6) #diastolic blood pressure
+Y <- c(63,67,74,64,75,69,90,60) #age for boys 5 to 13
+p5.data <- data.frame(cbind(X, Y))
+p5.reg <- lm(Y ~ X, data=p5.data)
+b0.p5 <- p5.reg$coefficients[1] #48.667
+b1.p5 <- p5.reg$coefficients[2] #2.333
+
+ei.p5 <- p5.reg$residuals
+plot(p5.data$X, ei.p5, xlab="X", ylab="Residuals", main="Diastolic Blood Pressure (Y) vs. Age for boys 5-13 (X)")
+```
+
+The residual plot above shows that the error terms do not have constant
+variances and seem to have larger variances where X is bigger.
+
+The estimated regression function: Y = `r round(b0.p5,3)` +
+`r round(b1.p5,3)`X
+\newpage
+b-)
+
+```{r P5_b}
+p5.newdata <- p5.data[-7,]
+p5.newreg <- lm(Y ~ X, data=p5.newdata)
+b0.p5new <- p5.newreg$coefficients[1] #53.068
+b1.p5new <- p5.newreg$coefficients[2] #1.621
+```
+
+The estimated regression function: Y = `r round(b0.p5new,3)` +
+`r round(b1.p5new,3)`X
+
+After omitting the case 7 from the data, the regression function has
+smaller $b_1$, so the case 7 affected the slope of the initial regression function
+to be steeper. We could have expected it by seeing the original data because Y=90
+at case 7 whereas Y sits 60 ~ 75 for all other cases. The case 7 seems to be an outlier.
+
+c-)
+
+```{r P5_c}
+predict.int <- predict(p5.newreg, data.frame(X=12), interval="prediction", level=0.99)
+lwr <- predict.int[2] #60.313
+upr <- predict.int[3] #84.736
+```
+
+99% Prediction interval for a new Y observation at X=12:
+`r round(lwr,3)` $\le Y_{h(new)} \le$ `r round(upr,3)`
+
+The observation $Y_6$ falls inside this prediction interval. Falling
+inside the prediction interval is not very meaningful as it is designed
+to be rather wide and to contain most of the observations at X=12. 
+
+If the observation actually fell outside the prediction interval as the observation
+$Y_7$ does, we should be alerted that maybe the blood pressure was measured incorrectly,
+or that 12-year boy has something going on in his body, etc.

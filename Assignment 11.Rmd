@@ -1,0 +1,361 @@
+---
+title: "Assignment 11"
+author: "Chul Hee Kim"
+date: '2021 12 06 '
+output:
+  pdf_document: default
+---
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+knitr::opts_chunk$set(ECHO=TRUE)
+
+# STEP 1: Function to load or download libraries
+loadLib = function(libName)
+{
+    if(require(libName, character.only=TRUE))
+    {
+        ##cat(libName, "loaded properly\n")
+    } else {
+        cat("Installing", libName, "\n")
+        install.packages(libName)
+        if(require(libName, character.only=TRUE))
+        {
+            cat(libName, "loaded properly\n")
+        } else {
+            stop(c(libName, "not properly installed\n"))
+        }
+    }
+}
+
+libs = c("ggplot2", "knitr", "MASS", "car", "onewaytests", "olsrr","ggpubr","dplyr", "Hmisc", "faraway","forecast", 
+         "rmarkdown", "markdown", "tidyr", "caret","kableExtra", "rpart", "rpart.plot", "lmtest", "Metrics","kernlab",      
+         "GGally","visdat","e1071","adabag", "vcd", "randomForest","ggcorrplot","mboost","party","neuralnet",
+         "HoRM","Hmisc","orcutt","ResourceSelection","fastDummies","printr")
+
+for (lib in libs)
+{
+    loadLib(lib)
+}
+
+## Helper to get data sets from one location on hard drive
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+## Helper to display regression function with n coefficients
+## If var.names = TRUE add a space and "*" symbol to make readable
+dispRegFunc <- function(reg, var.names=FALSE, pdfWrap=0, signif=6) {
+
+  ## Set the line wrapping only if this is being knit as a pdf
+  line.limit <- 0
+  if (!is.null(knitr::current_input())) {
+    if("pdf_document" %in% rmarkdown::all_output_formats(knitr::current_input())) {
+       line.limit <- pdfWrap
+    }
+  }
+  ## Check to see if this is a cv.glmnet object or a lm or rlm object
+  ifelse(class(reg) == "cv.glmnet",
+         coefs <- predict(reg, s=reg$lambda.min, type="coefficients")[,1],
+         coefs <- reg$coefficients)
+  
+  b0 = coefs[1]
+  n <- length(coefs)
+  my_formula <- paste0("Y = ", round(b0, digits = signif))
+  for (i in 2:n) {
+    ## Choose the +/- sign for the coefficient then remove it using abs()
+    new.formula.term <- paste0(ifelse(coefs[i] < 0," - "," + "),
+                         signif(abs(coefs[i]),signif),
+                         ifelse(var.names,paste0(" * ",names(coefs)[i]),
+                         names(coefs)[i]))
+    if (line.limit > 0) {
+      if (line.limit <= nchar(my_formula) + nchar(new.formula.term)) {
+        print(my_formula)
+        my_formula <- new.formula.term
+      } else {
+        my_formula <- paste0(my_formula, new.formula.term)
+      }
+    }
+    else {
+      my_formula <- paste0(my_formula, new.formula.term)
+    }
+  }
+  print(my_formula)
+}
+
+## Helper function to calculate R2, RMSE, and MAE using the 1-SSE/SST method of R2
+## instead of the postResample() method of squaring the correlation coefficient.
+resampleMetrics <- function(pred, obs) {
+	t(c(R2=caret::R2(pred, obs, formula = "traditional"),postResample(pred,obs)[-2]))
+}
+set.seed(123)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+
+## Function to calculate the optimal Cp for pruning
+getBestCp <- function(full_tree) {
+  ## Get the cp (complexity parameter) table for the full tree
+  cptable <- full_tree$cptable
+  nsplit <- nrow(cptable)
+  ## Get the minimum value of xerror (we want to choose the xerror within 1 STD 
+  ## of the minimum xerror with the the lowest nsplit value)
+  min.xerror <- which.min(full_tree$cptable[, 4]) 
+  for(i in 1:nsplit) {
+    ## Return the first value within 1 STD of the minimum xerror,
+    ## which will have the lowest nsplit due loop order
+    if(cptable[i, 4] < cptable[min.xerror, 4] + cptable[min.xerror, 5]) return(cptable[i, 1])
+  }
+  ## Didn't find anything, return the full tree
+  return(cptable[nsplit, 1])
+}
+```
+
+## Problem 1
+Use the diabetes data (copy and paste the following command into R console:library(faraway);data("diabetes")).
+
+Four hundred three African Americans were interviewed in a study to understand the prevalence of obesity, diabetes and other cardiovascular risk factors in central Virginia. Data is presented in diabetes. In this question we are interested in building a model to predict glycosolated hemoglobin (glyhb) in terms of the other relevant variables. (40 points)
+
+a-) use set.seed(1023), to create test(30% of the observations) and train (70% of the observations) data set. (5 points)
+
+Since there are many missing values in the \emph{diabetes} dataset, we first eliminate
+NAs by dropping two columns, \emph{bp.2s} and \emph{bp.2d} because these two columns
+have too many NAs. Next, we delete all the rows that have NAs. \emph{id} column
+is also dropped because there is no meaning. Lastly, we create dummy variables for
+factor variables since 'neuralnet' function only works with quantitative variables.
+It makes sense because we will have to normalize the data.
+
+```{r}
+data(diabetes)
+str(diabetes)
+head(diabetes[,1:12])
+head(diabetes[,13:19])
+apply(diabetes,2,function(x) sum(is.na(x))) # check missing values
+diabetes2 <- diabetes[,-c(1,15,16)] # drop id, bp.2s, bp.2d
+diabetes2 <- na.omit(diabetes2) # delete rows containing NAs
+X <- model.matrix(glyhb~., data=diabetes2)[,-1]
+diabetes3 <- data.frame(cbind(glyhb=diabetes2$glyhb,X))
+
+set.seed(1023)
+train_index <- createDataPartition(y=diabetes3$glyhb, p=0.7, list=FALSE)
+diabetes_train <- diabetes3[train_index,]
+diabetes_test <- diabetes3[-train_index,]
+```
+
+**Use the train data set to answer part b and c below:**
+
+b-) Compute the total sum of squares for the response, glyhb. This is the sum of squares about the mean. Now fit a neural network model with this response and the remaining variables as predictors. Use two hidden nodes. Do not rescale and fit the model only once. Compute the residual sum of squares. How has the model performed? (10 points)
+
+```{r}
+sst <- sum((diabetes_train$glyhb - mean(diabetes_train$glyhb))^2)
+
+set.seed(1023)
+NN <- neuralnet(glyhb ~ ., hidden=2, data=diabetes_train, linear.output=T)
+plot(NN)
+pred_NN <- compute(NN, diabetes_train[,-1])
+sse_NN_train <- sum((pred_NN$net.result - diabetes_train$glyhb)^2)
+sse_NN_train
+```
+
+Total Sum of squares (SST): `r round(sst,3)` \
+Residual sum of squares (SSE): `r round(sse_NN_train,3)`
+
+SSE is equal to SST, so the model is no better than taking the mean as its prediction.
+
+c-) Rescale all the numerical variables in the data frame and recompute the total sum of squares. Refit the same neural network model but to the rescaled data frame. Has the model done any better? (10 points)
+
+```{r}
+# Rescale all variables in between 0 and 1 scale
+normalize <- function(x) {return((x - min(x)) / (max(x) - min(x)))}
+scaled_diabetes <- as.data.frame(lapply(diabetes3, normalize))
+scaled_dbt_train <- scaled_diabetes[train_index,]
+scaled_dbt_test <- scaled_diabetes[-train_index,]
+
+set.seed(1023)
+NN2 <- neuralnet(glyhb ~ ., hidden=2, data=scaled_dbt_train, linear.output=T)
+plot(NN2)
+pred_NN2 <- compute(NN2, scaled_dbt_train[,-1])
+
+unnormalize <- function(x) {return(x * (max(diabetes3$glyhb) - min(diabetes3$glyhb)) + 
+                                   min(diabetes3$glyhb))}
+pred_NN2_un <- unnormalize(pred_NN2$net.result)
+sse_NN2_train <- sum((pred_NN2_un - diabetes_train$glyhb)^2)
+sse_NN2_train
+```
+
+After rescaling, the model performs better, and it is shown by the reduced SSE of 
+`r round(sse_NN2_train,3)`.
+
+* There were two different methods of normalizing, one from the lecture R file and another
+from the HW10 solutions. I wasn't sure which one is correct or whether both are correct,
+so I followed the one from the lecture R file.
+
+d-) Test the model performances of both models on the test data sets.  Calculate SSE (hint: for the model built in part C, you need to transform them back to original scale) (10 points)
+
+```{r}
+pred_NN_test <- compute(NN, diabetes_test[,-1])
+sse_NN_test <- sum((pred_NN_test$net.result - diabetes_test$glyhb)^2)
+
+pred_NN2_test <- compute(NN2, scaled_dbt_test[,-1])
+pred_NN2_test_un <- unnormalize(pred_NN2_test$net.result)
+sse_NN2_test <- sum((pred_NN2_test_un - diabetes_test$glyhb)^2)
+
+tbl <- rbind(sse_NN_test, sse_NN2_test)
+rownames(tbl) <- c("Unscaled Neural Network","Scaled Neural Network")
+colnames(tbl) <- c("SSE")
+kable(tbl, digits=4, align="c", booktabs=TRUE,caption="Model Comparison") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+e-) Which model would you pick? ( 5 points)
+
+Based on the model comparison table provided in part(d), we would choose the 
+neural network model fitted with the scaled data since it has a smaller SSE. 
+This is the expected result as the neural network learns and converges faster with scaled data.
+
+
+## Problem 2
+
+Refer to the Disease outbreak data set. Savings account status is 
+the response variable and age, socioeconomic status, and city sector are the predictor 
+variables. (30 points, 10 points each)
+
+a-) Fit  logistic  regression  model  to  predict  the  saving  account  status  on 
+the  predictor  variables  in  first-order  terms  and  interaction  terms  for. 
+all pairs of predictor variables. State the fitted response function. 
+
+All original column names are simplified as $Y, X_1, X_2, X_3, X_4$. Y is a 
+dichotomous response variable, $X_2$ has 3 levels, $X_3, X_4$ have 2 levels, but
+$X_3$ is coded 1-2. We will create two dummy variables for $X_2$ and change the
+levels of $X_3$ to 0-1.
+
+```{r}
+disout.o <- getDataSet("Disease Outbreak.csv")
+str(disout.o)
+head(disout.o)
+apply(disout.o,2,function(x) sum(is.na(x))) # check any missing data
+
+# Simplify variable names
+Y <- disout.o$Savings.account.status
+X1 <- disout.o$Age
+X2 <- disout.o$Socioeconomic.status
+X3 <- disout.o$Sector
+X4 <- disout.o$Disease.status
+disout.pre <- data.frame(cbind(Y,X1,X2,X3,X4))
+table(disout.pre$X2)
+table(disout.pre$X3)
+table(disout.pre$X4)
+
+disout <- dummy_cols(disout.pre, select_columns = 'X2')
+disout <- dummy_cols(disout, select_columns = 'X3')
+disout <- disout[,-c(3,4,6,9)] # drop unnecessary columns
+head(disout)
+
+f1 <- glm(Y ~ X1+X4+X2_2+X2_3+X3_2+X1:X4+X1:X2_2+X1:X2_3+X1:X3_2+X4:X2_2+X4:X2_3+X4:X3_2+
+            X2_2:X3_2+X2_3:X3_2, family = binomial, data=disout)
+summary(f1)
+```
+
+Y = 0.155908 + 0.0358383X1 - 0.946814X4 - 1.30628X2_2 - 2.15127X2_3 + 0.916937X3_2 + 0.0212472X1X4 + 0.00816572X1X2_2 + 0.00288974X1X2_3 - 0.0210772X1X3_2 - 0.11164X4X2_2 - 0.137603X4X2_3 + 0.93098X4X3_2 - 0.131848X2_2X3_2 + 0.388653X2_3X3_2
+
+b-) Use the likelihood ratio test to determine whether all interaction terms 
+can  be  dropped  from  the  regression  model;  use  $\alpha$  =  .01.  State  the 
+alternatives,  full  and  reduced  models,  decision  rule,  and  conclusion. 
+What is the approximate P-value of the test?
+
+```{r}
+f1_reduced <- glm(Y ~ X1+X4+X2_2+X2_3+X3_2, family = binomial, data=disout)
+anova(f1_reduced, f1, test="Chi")
+```
+
+$H_0$: All interaction terms can be dropped (all of their coefficients are zero). \
+$H_a$: Not all interaction terms can be dropped (not all of their coefficients are zero).
+
+The full and reduced models are described in ANOVA table as Model 1 and Model 2.
+ANOVA table above shows that p-value = 0.9803, which is greater than the significance
+level, $\alpha$=0.01, so we accept $H_0$. All interaction terms can be dropped.
+
+c-) Conduct the Hosmer-Lemeshow goodness of fit test for the 
+appropriateness  of  the  logistic  regression  function  by  forming  five 
+groups of approximately 20 cases each; use $\alpha$ = .05.
+
+```{r}
+f1.2 <- step(f1_reduced, direction="backward", trace=0)
+summary(f1.2)
+hoslem.test(f1.2$y, fitted(f1.2), g=5)
+hoslem.test(f1_reduced$y, fitted(f1_reduced), g=5)
+```
+
+$H_0$: The model is a good fit
+$H_a$: The model is not a good fit.
+
+We used the reduced model to conduct the test since the likelihood ratio test
+indicated that we should drop all the interaction terms. Then, we checked if any 
+of the first order terms can be dropped, and the backward elimination resulted in
+dropping $X_4$.
+The Hosmer-Lemeshow test shows p-value = 0.2733, which is greater than $\alpha$=0.05, so 
+we accept the null hypothesis. The model looks like a good fit.
+The test result of the reduced model before dropping $X_4$ is also shown, and 
+it also looks like a good fit.
+(The question asks us to form 5 groups of about 20 cases each, but since we have 196 cases,
+forming 5 groups resulted in about 40 cases each. Forming 10 groups of about 20 cases each
+and conducting the test gives the same result of a good fit with bigger p-value.)
+
+
+## Problem 3
+
+Refer to the Geriatric study. A researcher in geriatrics designed a prospective study 
+to investigate the effects of two interventions on the frequency of falls. One hundred 
+subjects were randomly assigned to one of the two interventions: education only ($X_1$ 
+= 0) and education plus aerobic exercise training ($X_1$ = 1). Subjects were at least 65 
+years  of  age  and  in  reasonably  good  health.  Three  variables  considered  to  be important as control variables were gender ($X_2$:0=female;1=male), a balance index 
+($X_3$).  and  a  strength  index  ($X_4$).  The  higher  balance  index,  the  more  stableis  the subject and the higher the strength index, the stronger is the subject. Each subject kept a diary recording the number of falls (Y) during the six months of the study.(30 points, 10 points each)
+
+a-) Fit  the  regression  model.  State  the  estimated  regression  coefficients, 
+their estimated standard deviations. and the estimated response 
+function.
+
+```{r}
+geri <- getDataSet("Geriatric Study.csv")
+str(geri)
+head(geri)
+apply(geri,2,function(x) sum(is.na(x)))
+
+f3 <- glm(Y ~ X1+X2+X3+X4, family=poisson, data=geri)
+summary(f3)
+
+tbl2 <- data.frame(summary(f3)$coefficients[,1:2])
+rownames(tbl2) <- c("b0","b1","b2","b3","b4")
+colnames(tbl2) <- c("Coefficient Estimates","Standard Deviations")
+kable(tbl2, digits=4, align="c", booktabs=TRUE,
+      caption="Estimated Regression Coefficients and SD") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+The estimated response function: \
+$\hat{\mu}$ = $e^{0.4895-1.0694X_1-0.0466X_2+0.0095X_3+0.0086X_4}$
+
+b-) Assuming that the fitted model is appropriate, use the likelihood ratio 
+test to determine whether gender ($X_2$) can be dropped from the model: 
+State the full and reduced models. decision rule. and conclusion. What 
+is the P-value of the test
+```{r}
+f3_reduced <- glm(Y ~ X1+X3+X4, family=poisson, data=geri)
+summary(f3_reduced)
+anova(f3_reduced, f3, test="Chisq")
+```
+
+$H_0$: $X_2$ can be dropped. \
+$H_a$: $X_2$ cannot be dropped.
+
+The reduced and full model are stated in ANOVA table as Model 1 and Model 2.
+The p-value = 0.6976, which is greater than our significance level, $\alpha$ = 0.05,
+so we accept the null hypothesis that $X_2$ can be dropped.
+
+c-) Predicted the number of falls for $X_1$=1, $X_2$=0, $X_3$=45, $X_4$=70
+```{r}
+test_dat <- data.frame(X1=1, X2=0, X3=45, X4=70)
+pred3 <- predict(f3_reduced, test_dat, type="link")
+exp(pred3)
+```
+
+We used the reduced model from part(b) since the likelihood ratio test showed that
+we should drop $X_2$.
+The predicted number of falls for $X_1$=1, $X_2$=0, $X_3$=45, $X_4$=70 is 1.5233.

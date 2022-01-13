@@ -1,0 +1,253 @@
+---
+title: "Assignment 1"
+author: "Chul Hee Kim"
+date: '2021 9 12 '
+output:
+  pdf_document: default
+  word_document: default
+---
+* When I knit my code, all the values appear differently in the knit file from the values in RStudio, so I manually wrote down answers in the knit file instead of calling variable names directly.
+
+## Problem 1
+
+```{r P1_setup, message=FALSE}
+# Read data from csv file 
+library(caret)
+
+GPA.data <- read.csv("/cloud/project/Data/Grade Point Average Data.csv")
+```
+
+a-)
+```{r P1_a, warning=FALSE}
+set.seed(1234) # to get the identical result for each data partition attempt
+DataSplit <- createDataPartition(y = GPA.data$Y, p = 0.7, list = FALSE)
+
+TrainData <- GPA.data[DataSplit,] # development sample (70%)
+TestData <- GPA.data[-DataSplit,] # hold-out sample (30%)
+```
+
+b-)
+```{r P1_b}
+LmFit <- lm(Y ~ X, data = TrainData)
+b_0 <- LmFit$coefficients[1]
+b_1 <- LmFit$coefficients[2]
+```
+$b_0$ and $b_1$ represent estimates of $\beta_0$ and $\beta_1$, respectively.
+
+$b_0$ = 1.922 \newline
+$b_1$ = 0.0473 \newline
+Y = 1.922 + 0.0473X 
+
+c-) 
+```{r P1_c, message=FALSE}
+plot(GPA.data$X, GPA.data$Y, main = "GPA (at the end of freshman year) vs ACT score", 
+     xlab = "ACT score", ylab = "GPA") + abline(LmFit)
+```
+
+Because many data points deviate much from the estimated regression line, it does not appear to fit the data well. The very low R-squared value, 0.1087, also supports this claim. 
+
+d-)
+```{r P1_d}
+y_hat <- b_0 + b_1 * 30  
+```
+Estimate of GPA (at X = 30) = 3.3418
+
+e-)
+The point estimate of the change in the mean response when ACT score increases by one point is equal to 0.0473, which is equivalent to $b_1$.
+
+f-)
+```{r P1_f}
+sum(LmFit$residuals)
+```
+
+Although the sum of residuals shown above is not exactly zero, it is negligibly small, so we can say that they sum to zero.
+
+g-)
+```{r P1_g}
+n <- nrow(TrainData) # number of data points in the development sample
+var <- sum(LmFit$residuals^2)/(n-2) # summary(LmFit)$sigma^2 gives the same result.
+sd <- sqrt(var)
+```
+Estimates of $\sigma^2$ and $\sigma$ are as below:
+
+$s^2 =$ 0.3356 \newline
+$s =$ 0.5793
+
+$\sigma$ is expressed in GPA.
+
+h-)
+```{r P1_h}
+summary(LmFit)
+y_hat <- predict(LmFit, TestData)
+
+train_model <- data.frame(obs = TrainData$Y, pred = LmFit$fitted.values)
+defaultSummary(train_model)
+
+test_model <- data.frame(obs = TestData$Y, pred = y_hat)
+defaultSummary(test_model)
+```
+(RMSE, Rsquared, MAE values are different in the knit file from those in RStudio. I used RStudio values as answers.) The linear regression model 'LmFit' does not appear to be a very good model as R-squared is very low (0.1087). Furthermore, when this model is tested with the hold-out sample, R-squared decreases even more to 0.0277 and RMSE increases by about 0.14. Considering the significant drop in R-squared, we should be worried about overfitting, and it seems further analysis is necessary. The p-value of X indicates that the predictor variable, ACT test score, is significant, and we can find a weak positive linear relationship between X and Y.
+
+## Problem 2
+
+```{r P2_setup}
+# Read data from csv file
+CDIdata <- read.csv("/cloud/project/Data/CDI Data.csv")
+```
+
+a)
+```{r P2_a}
+# Assign variables in simple names
+Y <- CDIdata$Number.of.active.physicians
+X1 <- CDIdata$Total.population
+X2 <- CDIdata$Number.of.hospital.beds
+X3 <- CDIdata$Total.personal.income
+CDI_sub <- data.frame(cbind(Y,X1,X2,X3)) # New data
+
+set.seed(1234) # to get the identical result for each data partition attempt
+train_index <- createDataPartition(y = CDI_sub$Y, p = 0.7, list = FALSE)
+train_set <- CDI_sub[train_index,] # development sample (70%)
+test_set <- CDI_sub[-train_index,] # hold-out sample (30%)
+```
+
+b)
+```{r P2_b1}
+# Model with Total.population as predictor variable
+fit_tp <- lm(Y ~ X1, data = train_set)
+b0_tp <- fit_tp$coefficients[1]
+b1_tp <- fit_tp$coefficients[2]
+```
+$X_1$ = Total.population \newline
+Y = -93.1566 + 0.0028$X_1$ 
+
+```{r P2_b2}
+# Model with Number.of.hospital.beds as predictor variable
+fit_hb <- lm(Y ~ X2, data = train_set)
+b0_hb <- fit_hb$coefficients[1]
+b1_hb <- fit_hb$coefficients[2]
+```
+$X_2$ = Number.of.hospital.beds \newline
+Y = -105.0845 + 0.7436$X_2$
+
+```{r P2_b3}
+# Model with Total.personal.income as predictor variable
+fit_pi <- lm(Y ~ X3, data = train_set)
+b0_pi <- fit_pi$coefficients[1]
+b1_pi <- fit_pi$coefficients[2]
+```
+$X_3$ = Total.personal.income \newline
+Y = -40.2525 + 0.1318$X_3$
+
+c)
+```{r P2_c, message=FALSE}
+plot(train_set$X1, train_set$Y, main = "# of Active Physicians vs Total Population", 
+     xlab = "Total Population", ylab = "# of Active Physicians") + abline(fit_tp)
+
+plot(train_set$X2, train_set$Y, main = "# of Active Physicians vs # of Hospital Beds", 
+     xlab = "# of Hospital Beds", ylab = "# of Active Physicians") + abline(fit_hb)
+
+plot(train_set$X3, train_set$Y, main = "# of Active Physicians vs Total Personal Income", 
+     xlab = "Total Personal Income", ylab = "# of Active Physicians") + abline(fit_pi)
+
+```
+
+Because most of the data points lie close to the estimated regression line, each of the three linear regression appears to fit the data well. The R-squared values, 0.9029, 0.9073, 0.9241 (same order as the plots), also support this claim. We can observe a strong positive linear relationship between the number of active physicians and each of the three predictor variables.
+
+d)
+```{r P2_d}
+n <- nrow(train_set)
+
+MSE_tp <- sum(fit_tp$residuals^2)/(n-2) 
+MSE_hb <- sum(fit_hb$residuals^2)/(n-2) 
+MSE_pi <- sum(fit_pi$residuals^2)/(n-2) 
+
+MSE_tp
+MSE_hb
+MSE_pi
+```
+MSE (Total Population) = 377,001.2 \newline
+MSE (# of Hospital Beds) = 359,910.6 \newline
+MSE (Total Personal Income) = 294,367.6 \newline
+
+Total.personal.income variable leads to the smallest variability around the fitted regression line. We will use this predictor variable to estimate Y because it gives the least MSE, given the training data. The variable that has the least MSE represent the data better than the others, so it is expected to provide us with a better prediction than the other variables with bigger MSE.
+
+e)
+```{r P2_e}
+summary(fit_pi)
+predicted_pi <- predict(fit_pi, test_set)
+
+trained <- data.frame(obs = train_set$Y, pred = fit_pi$fitted.values)
+defaultSummary(trained)
+
+tested <- data.frame(obs = test_set$Y, pred = predicted_pi)
+defaultSummary(tested)
+
+```
+(RMSE, Rsquared, MAE values are different in the knit file from those in RStudio. I used RStudio values as answers.) The linear regression model 'fit_pi' seems to be a very good model as R-squared is very high (0.0.9241). But, when this model is tested with the hold-out sample, R-squared decreases significantly to 0.7583. Considering the significant drop in R-squared, we should be worried about overfitting, and it seems further analysis is necessary. The p-value of X3 indicates that the predictor variable, Total.personal.income, is significant, and we can find a strong positive linear relationship between X3 and Y.
+
+## Problem 3
+
+```{r P3}
+CDI_pi <- data.frame(cbind(Y,X3)) 
+
+p3 <- function(dat0){
+  n <- nrow(dat0)
+  out <- data.frame(matrix(0,nrow=1000,ncol=2))
+  
+  for(i in 1:1000){
+    ind <-sample(1:n, 400)
+    dat <- dat0[ind,]
+    fit <- lm(Y ~ X3, data = dat)
+    out[i,] <- c(fit$coefficients)
+  }
+  dimnames(out)[[2]] <- c("b0","b1")
+  out
+}
+
+set.seed(1234)
+
+ans <- p3(CDI_pi)
+mean_beta <-apply(ans, 2, mean)
+var_beta <- apply(ans, 2, var)
+
+# Regression Model with Full Data
+fit_full <- lm(Number.of.active.physicians ~ Total.personal.income, data = CDIdata)
+b0_full <- fit_full$coefficients[1]
+b1_full <- fit_full$coefficients[2]
+```
+
+From 1,000 regression models:
+
+Mean of $\beta_0$ = -48.874 \newline
+Mean of $\beta_1$ = 0.1318 \newline
+Variance of $\beta_0$ = 73.6363 \newline
+Variance of $\beta_1$ = 1.279e-06 \newline
+
+$\beta_0$ of the full-data model: -48.3949 \newline
+$\beta_1$ of the full-data model: 0.1317
+
+As expected, the means of $\beta_0$ and $\beta_1$ calculated from 1,000 linear regressions are very close to the $\beta_0$ and $\beta_1$ of the regression model built with the full data. Because we took a big enough number (1,000) of random samples from the population, the mean of the sampled data is supposed to be very close to the population data.
+
+
+```{r method2}
+# Another way of getting the same results for means and variances of b0 and b1:
+#
+# N <- 1000
+# 
+# set.seed(1234)
+# betas <- replicate(N, {
+#   dat <- CDIdata[sample(1:nrow(CDI_pi), 400),]
+#   fit <- lm(Y ~ X3, data = dat)
+#   b0 <- fit$coefficients[1]
+#   b1 <- fit$coefficients[2]
+#   beta <- c(b0, b1)
+#   beta
+# })
+# 
+# mean_b0 <- mean(betas[1,])
+# mean_b1 <- mean(betas[2,])
+# 
+# var_b0 <- sum((betas[1,]-mean_b0)^2)/(N-1)
+# var_b1 <- sum((betas[2,]-mean_b1)^2)/(N-1)
+```
+

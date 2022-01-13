@@ -1,0 +1,210 @@
+---
+title: "Assignment 5"
+author: "Chul Hee Kim"
+date: '2021 10 18 '
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+# STEP 0: Function to load or download libraries
+loadLib = function(libName)
+{
+  if(require(libName, character.only=TRUE))
+  {
+    ##cat(libName, "loaded properly\n")
+  } else {
+    cat("Installing", libName, "\n")
+    install.packages(libName)
+    if(require(libName, character.only=TRUE))
+    {
+      cat(libName, "loaded properly\n")
+    } else {
+      stop(c(libName, "not properly installed\n"))
+    }
+  }
+}
+
+libs = c("ggplot2","knitr","MASS","ggpubr","dplyr","tidyverse","faraway", 
+         "rmarkdown", "markdown", "tidyr", "caret","readr","onewaytests","plyr",
+         "lmtest","pander","kableExtra","QuantPsyc","GGally")
+
+for (lib in libs)
+{
+  loadLib(lib)
+}
+
+## Helper to get data sets from one location on my R Cloud project
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+```
+
+## Problem 1
+
+a-)
+```{r P1_a}
+senic <- getDataSet("SENIC.csv")
+X <- senic$AvailableFacilitiesPercent 
+x <- scale(X, scale=FALSE)
+xsq <- x^2
+Y <- senic$Nurses
+senic.reg <- lm(Y ~ x + xsq)
+summary(senic.reg)
+vif(senic.reg)
+```
+x = X - $\bar{X}$ \
+Y = 150.079 + 7.066x + 0.101$x^2$
+
+All the VIFs are almost 1, so there seems to be no collinearity problem.
+
+b-)
+```{r P1_b1, fig.height=4}
+ei <- senic.reg$residuals
+plot(senic.reg$fitted.values, ei, xlab="Fitted Values", ylab="Residuals")
+```
+
+The residuals against the fitted values plot shows possible nonconstant error variances and
+potential outliers. We would probably need a further analysis (e.g., Box-Cox procedure), but
+not shown here for the sake of this problem.
+
+```{r P1_b2, fig.height=4}
+senic %>% ggplot(aes(x=AvailableFacilitiesPercent, y=Nurses)) + 
+  geom_point() + 
+  stat_smooth(method='lm', formula=y~poly(x,2), se=FALSE) +
+  xlab("AvailableFacilitiesPercent (scaled)")
+
+```
+The summary in part (a) shows $R^2$ = 0.6569, which is a fairly good number, and
+the blue regression line above appears to be a good fit of the data points although
+there is a higher variability for bigger X. The second-order regression model is
+significant as well as both predictor variables, X and $X^2$.
+\newpage
+c-)
+```{r P1_c}
+senic.reduced <- lm(Y ~ x)
+anova(senic.reduced, senic.reg)
+f <- qf(0.9,1,110)
+```
+$H_0$: $\beta_2 = 0$ \
+$H_a$: $\beta_2 \ne 0$
+
+ANOVA table shows that $F^*$ = 13.806 > F(0.9;1,110) = `r round(f,2)`, so 
+we conclude $H_a$ that the quadratic term cannot be dropped from the model.
+p-value is 0.00032 and is less than $\alpha$=0.1.
+
+
+## Problem 2
+
+a-)
+```{r P2_a}
+data(divusa)
+divusa2 <- divusa[,-1]
+divusa.reg <- lm(divorce ~ ., data=divusa2)
+summary(divusa.reg)
+round(cor(divusa2),2)
+
+xm <- model.matrix(divusa.reg)[,-1]
+e <- eigen(t(xm)%*%xm)
+k <- t(sqrt(e$val[1]/e$val))
+kable(k, digits=3, align="c", caption="Condition Numbers", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+$R^2$ = 0.9208 is very high, and the p-value for the F-statistics is very small.
+Hence, the model is significant, but two predictors 'unemplyed' and 'military'
+could be insignificant depending on how we set the $\alpha$. There are some
+large pairwise correlations, and the condition numbers shown in the table above
+are all less than 30, so the collinearity does not appear to be an issue here.
+
+b-)
+```{r P2_b, message=FALSE}
+vif(divusa.reg)
+```
+The VIFs shown above are all less than 10, which is the threshold level we are using here, 
+so there is no evidence that collinearity causes issues here. But, one thing to keep
+in mind is that 'femlab', 'marriage', and 'birth' are quite correlated to each other, 
+so we may need a further analysis. For now, we move on to the next based solely on VIF results.
+
+c-)
+We use the significance level ($\alpha$=0.05), and the summary in part (a) shows that
+'unemployed' and 'military' predictors are not significant as their p-values are greater
+than 0.05.
+```{r P2_c}
+divusa.reduced <- lm(divorce ~ femlab+marriage+birth, data=divusa2)
+summary(divusa.reduced)
+anova(divusa.reduced, divusa.reg)
+vif(divusa.reduced)
+```
+ANOVA table confirms that 'unemplyed' and 'military' can be dropped since the 
+p-value for the F-statistic is greater than $\alpha$=0.05.
+After removing the insignificant predictors from our model, all three VIFs are reduced,
+so the collinearity seems to be reduced after the removal.
+
+
+## Problem 3
+
+a-)
+```{r P3_a}
+CP.data <- getDataSet("Commercial Properties Data Set.csv")
+CP.reg <- lm(Y ~ ., data=CP.data)
+lm.beta(CP.reg)
+b1 <- lm.beta(CP.reg)[1]
+b2 <- lm.beta(CP.reg)[2]
+b3 <- lm.beta(CP.reg)[3]
+b4 <- lm.beta(CP.reg)[4]
+```
+$\hat{Y}^*$ = `r round(b1,4)`$X_1^*$ + `r round(b2,4)`$X_2^*$ + `r round(b3,4)`$X_3^*$ + `r round(b4,4)`$X_4^*$
+
+b-)
+$b_1$: An increase of one standard deviation of $X_1$ when $X_2,X_3,X_4$ are fixed reduces Y by 0.548 sd. \
+$b_2$: An increase of one standard deviation of $X_2$ when $X_1,X_3,X_4$ are fixed increases Y by 0.424 sd. \
+$b_3$: An increase of one standard deviation of $X_3$ when $X_1,X_2,X_4$ are fixed increases Y by 0.048 sd. \
+$b_4$: An increase of one standard deviation of $X_4$ when $X_1,X_2,X_3$ are fixed increases Y by 0.503 sd. \
+
+We must be cautious about the relative importance of the standard regression coefficients because 
+the magnitudes of the coefficients are affected not only by the presence of correlations among 
+the predictor variables but also by the spacings of the observations on each of these variables.
+
+c-)
+```{r P3_c}
+ybar <- mean(CP.data$Y)
+x1bar <- mean(CP.data$X1)
+x2bar <- mean(CP.data$X2)
+x3bar <- mean(CP.data$X3)
+x4bar <- mean(CP.data$X4)
+s1 <- sd(CP.data$X1)
+s2 <- sd(CP.data$X2)
+s3 <- sd(CP.data$X3)
+s4 <- sd(CP.data$X4)
+sy <- sd(CP.data$Y)
+
+ob1 <- (sy/s1)*b1
+ob2 <- (sy/s2)*b2
+ob3 <- (sy/s3)*b3
+ob4 <- (sy/s4)*b4
+ob0 <- ybar - ob1*x1bar - ob2*x2bar - ob3*x3bar - ob4*x4bar
+
+tbl <- t(CP.reg$coefficients)
+
+kable(tbl, digits=7, align="c", caption="Regression coefficients in the original variables", booktabs=TRUE) %>%
+  kable_styling(latex_options="HOLD_position")
+```
+The regression model in the original variables (transformed back from the standardized regression): \
+$\hat{Y}$ = `r round(ob0,3)`+`r round(ob1,3)`$X_1$+`r round(ob2,3)`$X_2$+`r round(ob3,3)`$X_3$+`r round(ob4,7)`$X_4$
+
+The regression coefficients in the above equation are the same as the ones in the table, which are
+the coefficients for the original regression model we obtained in Problem 4b in HW4.
+
+d-)
+```{r P3_d}
+vif(CP.reg)
+mean.vif <- mean(vif(CP.reg))
+```
+The maximum of the VIFs is 1.648 and the mean of them is `r round(mean.vif,3)`. 
+It means that the expected sum of squared errors in the least squares standardized
+regression coefficients is about 1.4 times as large as it would be if the X variables
+were uncorrelated. Therefore, X variables are close to being uncorrelated. Also,
+all four VIFs are significantly less than 10 and even close to 1, so 
+we do not see much multicollinearity problem here.

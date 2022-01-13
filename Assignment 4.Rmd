@@ -1,0 +1,331 @@
+---
+title: "Assignment 4"
+author: "Chul Hee Kim"
+date: '2021 10 2 '
+output: pdf_document
+---
+
+```{r include=FALSE, warning=FALSE, message=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(MASS)) install.packages("MASS", repos = "http://cran.us.r-project.org")
+if(!require(onewaytests)) install.packages("onewaytests", repos = "http://cran.us.r-project.org")
+if(!require(faraway)) install.packages("faraway", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("faraway", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+library(caret)
+library(MASS)
+library(onewaytests)
+library(faraway)
+library(knitr)
+library(kableExtra)
+options(scipen=999)
+```
+
+## Problem 1
+
+a-)
+```{r P1_a}
+CDI.data <- read.csv("/cloud/project/Data/CDI Data.csv")
+Y <- CDI.data$Number.of.active.physicians
+X1 <- CDI.data$Total.population
+X2 <- CDI.data$Total.personal.income
+X3 <- I(CDI.data$Geographic.region == 1)*1 # NE
+X4 <- I(CDI.data$Geographic.region == 2)*1 # NC
+X5 <- I(CDI.data$Geographic.region == 3)*1 # S
+CDI.data2 <- data.frame(cbind(Y,X1,X2,X3,X4,X5))
+CDI.reg <- lm(Y ~ ., data=CDI.data2)
+summary(CDI.reg)
+
+n <- nrow(CDI.data2) # 440
+p <- 6
+b3 <- CDI.reg$coefficients[4] # 149.02
+b4 <- CDI.reg$coefficients[5] # 145.53
+T.crit <- qt(0.975,n-p) # 1.965
+b3.se <- summary(CDI.reg)$coefficients[4,2] # 86.833
+b4.se <- summary(CDI.reg)$coefficients[5,2] # 85.153
+b3.lwr <- b3 - T.crit*b3.se # 5.89
+b3.upr <- b3 + T.crit*b3.se # 292.15
+b4.lwr <- b4 - T.crit*b4.se # 5.16
+b4.upr <- b4 + T.crit*b4.se # 285.89
+
+# Confirm the results with 'confint' function 
+confint(CDI.reg)[4:5,]
+```
+Confidence Intervals (calculated manually): \newline
+`r round(b3.lwr,3)` $\le \beta_3 \le$ `r round(b3.upr,3)` \newline
+`r round(b4.lwr,3)` $\le \beta_4 \le$ `r round(b4.upr,3)`
+
+The confidence intervals for $\beta_3$ and $\beta4$ are very similar and mostly 
+overlap with each other, so the effect for NE region on number of active physicians 
+does not differ from the effect for NC region.
+
+$*$ Below, I attempt to create the confidence interval for $\beta_4-\beta_3$
+```{r P1_a2}
+b4b3 <- b4 - b3 # -3.493
+b4.b3.se <- vcov(CDI.reg)[5,4] # 4289.97
+b4.var <- vcov(CDI.reg)[5,5] # 7251.02
+b3.var <- vcov(CDI.reg)[4,4] # 7540
+b4b3.var <- b4.var + b3.var - 2*b4.b3.se # 6211.09
+b4b3.lwr <- b4b3 - T.crit*sqrt(b4b3.var) # -158.39
+b4b3.upr <- b4b3 + T.crit*sqrt(b4b3.var) # 151.40
+```
+$(b_4-b_3) \pm t(1-\frac{\alpha}{2},df)s\{b_4-b_3\}$ \newline
+$s^2\{b_4-b_3\} = s^2\{b_4\} + s^2\{b_3\} - 2s\{b_4,b_3\}$
+
+Confidence Interval:
+`r round(b4b3.lwr,3)` $\le \beta_4 - \beta_3 \le$ `r round(b4b3.upr,3)`
+
+The confidence interval above includes zero, so we cannot conclude that the effect
+for the NE region on number of physicians differs from that for NC region.
+It is consistent with the result from comparing two confidence intervals above.
+
+b-)
+```{r P1_b}
+# Reduced model
+CDI.reg.reduced <- lm(Y ~ X1+X2, data=CDI.data2)
+SSE_F <- anova(CDI.reg)$`Sum Sq`[6]
+SSE_R <- anova(CDI.reg.reduced)$`Sum Sq`[3]
+dfF <- 434 # n - 6
+dfR <- 437 # n - 3
+F.stat <- ((SSE_R-SSE_F)/(dfR-dfF)) / (SSE_F/dfF) # 1.949
+F.crit <- qf(0.9,dfR-dfF,dfF) # 2.096
+pv <- 1-pf(F.stat,3,434) # 0.121
+```
+Full Model: $Y = \beta_0 + \beta_1X_1 + \beta_2X_2 + \beta_3X_3 + \beta_4X_4 + \beta_5X_5$ \newline
+Reduced Model: $Y = \beta_0 + \beta_1X_1 + \beta_2X_2$
+
+$H_0: \beta_3 = \beta_4 = \beta_5 = 0$ \newline
+$H_a$: not all $\beta_3$ and $\beta_4$ and $\beta_5$ equal zero
+
+$F^* = \frac{SSE(R)-SSE(F)}{df_R-df_F}\div\frac{SSE(F)}{df_F} =$ `r round(F.stat,3)` \newline
+$F(1-\alpha;df_R-df_F,df_f)$ = F(0.95;3,434) = `r round(F.crit,3)`
+
+$F^* \le F(0.95;3,434)$, so we conclude $H_0$ that no geographic effects are present.
+p-value = `r round(pv,3)`.
+
+Below is the simpler method to get the $F^*$ and p-value.
+```{r P1_b2}
+anova(CDI.reg, CDI.reg.reduced)
+```
+$F^* = 1.949$ and p-value = 0.121 are the same as the one we calculated manually.
+
+
+## Problem 2
+
+a-)
+```{r P2_a}
+GR.data <- read.csv("/cloud/project/Data/Grocery Retailer Data Set.csv")
+GR.reg <- lm(Y ~ X1+X3+X2, data=GR.data)
+summary(GR.reg)
+b0 <- GR.reg$coefficients[1] # 4,149.89
+b1 <- GR.reg$coefficients[2] # 0.000787
+b2 <- GR.reg$coefficients[4] # -13.166
+b3 <- GR.reg$coefficients[3] # 623.55
+```
+The estimated regression function: 
+Y = `r round(b0,3)` + `r round(b1,3)`$X_1$ + `r round(b2,3)`$X_2$ + `r round(b3,3)`$X_3$
+
+The interpretation of the coefficients: \newline
+$b_1$: the change in E[Y] with a unit change in $X_1$ while $X_2$ and $X_3$ are held constant \newline
+$b_2$: the change in E[Y] with a unit change in $X_2$ while $X_1$ and $X_3$ are held constant \newline
+$b_3$: the change in E[Y] with a unit change in $X_3$ while $X_1$ and $X_2$ are held constant
+\newpage
+b-)
+```{r P2_b}
+plot(GR.reg$residuals, xlab="Time (weeks)", ylab="Residuals")
+```
+
+The time plot of residuals shown above seems to have no pattern and shows no indication
+that the error terms are correlated.
+
+c-)
+```{r P2_c}
+anova(GR.reg)
+SSR.X1 <- anova(GR.reg)$`Sum Sq`[1] # 136,366
+SSR.X3_1 <- anova(GR.reg)$`Sum Sq`[2] # 2,033,565
+SSR.X2_13 <- anova(GR.reg)$`Sum Sq`[3] # 6,675
+```
+$SSR(X_1)$ = `r round(SSR.X1,0)` \newline
+$SSR(X_3\vert X_1)$ = `r round(SSR.X3_1,0)` \newline
+$SSR(X_2\vert X_1,X_3)$ = `r round(SSR.X2_13,0)`
+
+d-)
+```{r P2_d}
+GR.reg.reduced <- lm(Y ~ X1+X3, data=GR.data)
+anova(GR.reg, GR.reg.reduced)
+F1 <- anova(GR.reg, GR.reg.reduced)[2,5] # F = 0.3251
+F.crit <- qf(0.95,1,48) # 4.04
+pvalue <- 1 - pf(F1,1,48) # 0.5712
+```
+$H_0: \beta_2 = 0$
+$H_a: \beta_2 \ne 0$
+
+ANOVA table shows that $F^*$ = 0.3251 $\le$ F(0.95;1,48) = `r round(F.crit,2)`,
+so we conclude $H_0$ that $X_2$ can be dropped from the regression model that
+already contains $X_1$ and $X_3$. The p-value is `r round(pvalue,3)` and is greater than the
+significant level ($\alpha$=0.05).
+
+$*$Alternative way to get $F^*$
+```{r}
+F2 <- anova(GR.reg)$`Mean Sq`[3] / anova(GR.reg)$`Mean Sq`[4]
+```
+$F^* = \frac{MSR(X_2\vert X_1,X_3)}{MSE(X_1,X_2,X_3)}$ (p.264 of textbook) \newline
+$F^*$ = `r round(F2,4)`
+
+
+## Problem 3
+
+```{r P3_1}
+data(ozone)
+ozone.reg <- lm(O3 ~ temp+humidity+ibh, data=ozone)
+
+par(mfrow=c(1,2))
+plot(ozone.reg$fitted.values, ozone.reg$residuals, xlab="Fitted Values", ylab="Residuals")
+error.std3 <- rstandard(ozone.reg)
+qqnorm(error.std3, xlab="Normal Scores", ylab="Standardized Residuals", 
+       main="Normal Probability Plot")
+qqline(error.std3, col="steelblue", lwd=2)
+```
+
+QQ plot shows that the error terms are approximately normally distributed, but
+the residuals vs. fitted values plot indicates the nonconstancy of the error terms.
+As the fitted values increase, the variability of residuals also increases a lot.
+So, we will try to find a proper transformation using the Box-Cox procedure below.
+
+```{r P3_2}
+par(mfrow=c(1,2))
+boxcox(ozone.reg,lambda=seq(-1,2,by=.1))
+boxcox(ozone.reg,lambda=seq(0.26,0.3,by=.01))
+```
+
+The zoom-in version of the Box-Cox plot on the right shows that $\lambda$ is around 0.28.
+Since $\lambda$=0 suggests the logarithmic transformation and $\lambda$=0.5 suggests the
+square root transformation of Y, it is not very clear which of the two is more appropriate
+in our case. Maybe either one is justifiable. Further analysis seems necessary.
+
+```{r P3_3, fig.height=4}
+par(mfrow=c(1,2))
+ozone.reg.log <- lm(log(O3) ~ temp+humidity+ibh, data=ozone)
+plot(ozone.reg.log$fitted.values, ozone.reg.log$residuals, xlab="Fitted Values", ylab="Residuals",
+     main="Log Transformation")
+error.std4 <- rstandard(ozone.reg.log)
+qqnorm(error.std4, xlab="Normal Scores", ylab="Standardized Residuals", 
+       main="Normal Probability Plot")
+qqline(error.std4, col="steelblue", lwd=2)
+
+par(mfrow=c(1,2))
+ozone.reg.sqrt <- lm(sqrt(O3) ~ temp+humidity+ibh, data=ozone)
+plot(ozone.reg.sqrt$fitted.values, ozone.reg.sqrt$residuals, xlab="Fitted Values", ylab="Residuals",
+     main="Square Root Transformation")
+error.std5 <- rstandard(ozone.reg.sqrt)
+qqnorm(error.std5, xlab="Normal Scores", ylab="Standardized Residuals", 
+       main="Normal Probability Plot")
+qqline(error.std5, col="steelblue", lwd=2)
+
+sh1 <- shapiro.test(ozone.reg$residuals)$p.value
+sh2<- shapiro.test(ozone.reg.log$residuals)$p.value
+sh3 <- shapiro.test(ozone.reg.sqrt$residuals)$p.value
+tbl2 <- data.frame("Original"=sh1, "Log Transformation"=sh2, "Sqrt Transformation"=sh3)
+kable(tbl2, format="latex", digits=6, caption="Shapiro-Wilk test p-values") %>%
+  kable_styling(latex_options="HOLD_position")
+
+r2 <- summary(ozone.reg)$r.squared
+r2.log <- summary(ozone.reg.log)$r.squared
+r2.sqrt <- summary(ozone.reg.sqrt)$r.squared
+tbl <- data.frame("R-squared"=r2, "R-squared (log)"=r2.log, "R-squared (Sqrt)"=r2.sqrt)
+kable(tbl, format="latex", digits=4, caption="Comparison of R-squared Values") %>%
+  kable_styling(latex_options="HOLD_position")
+```
+
+The QQ plot of the log transformed model has a curvy shape, and the Shapiro-Wilk test
+result shows that it is not normally distributed whereas the normality holds for the
+square root transformation. 
+The residuals plots show that the square root transformation is better than the log
+transformation, showing more constancy of variability. Also, $R^2$ is the highest
+for the square root transformation despite the small difference. Given above results, 
+we would choose the square root transformation, but some additional adjustment might
+be necessary because there seems to be significantly lower variances of residuals 
+for lower fitted values.
+\newpage
+
+## Problem 4
+
+a-)
+```{r P4_a}
+CP.data <- read.csv("/cloud/project/Data/Commercial Properties Data Set.csv")
+plot(CP.data)
+round(cor(CP.data),2)
+```
+The scatter plot matrix and correlation matrix above indicate that each of the predictor
+variables is linearly associated with the response variable (Y) with $X_4$ showing the 
+highest degrees of association and $X_3$ the lowest. The matrices also show the 
+intercorrelations among the predictor variables. In particular, $X_2$ has some degree of
+pairwise correlations with other predictor variables while $X_3$ and $X_4$ are 
+almost uncorrelated.
+
+b-)
+```{r P4_b}
+CP.reg <- lm(Y ~ X1+X2+X3+X4, data=CP.data)
+summary(CP.reg)
+b0 <- CP.reg$coefficients[1] # 12.2
+b1 <- CP.reg$coefficients[2] # -0.142
+b2 <- CP.reg$coefficients[3] # 0.282
+b3 <- CP.reg$coefficients[4] # 0.619
+b4 <- CP.reg$coefficients[5] # 0.0000079
+```
+The estimated regression function:
+Y = `r round(b0,3)` - `r round(-b1,3)`$X_1$ + `r round(b2,3)`$X_2$ + `r round(b3,3)`$X_3$ + `r round(b4,7)`$X_4$
+
+c-)
+```{r P4_c}
+ei <- CP.reg$residuals
+boxplot(ei)
+```
+
+The box plot of the residuals shows a fairly symmetrical distribution.
+
+d-)
+```{r P4_d}
+par(mfrow=c(3,2), mar=c(4,4,1,2))
+plot(CP.reg$fitted.values, ei, xlab=expression(hat(Y)), ylab="Residuals")
+plot(CP.data$X1, ei, xlab=expression(X[1]), ylab="Residuals")
+plot(CP.data$X2, ei, xlab=expression(X[2]), ylab="Residuals")
+plot(CP.data$X3, ei, xlab=expression(X[3]), ylab="Residuals")
+plot(CP.data$X4, ei, xlab=expression(X[4]), ylab="Residuals")
+par(mfrow=c(3,2), mar=c(4,4,1,2))
+plot(CP.data$X1*CP.data$X2, ei, xlab="X1X2", ylab="Residuals")
+plot(CP.data$X1*CP.data$X3, ei, xlab="X1X3", ylab="Residuals")
+plot(CP.data$X1*CP.data$X4, ei, xlab="X1X4", ylab="Residuals")
+plot(CP.data$X2*CP.data$X3, ei, xlab="X2X3", ylab="Residuals")
+plot(CP.data$X2*CP.data$X4, ei, xlab="X2X4", ylab="Residuals")
+plot(CP.data$X3*CP.data$X4, ei, xlab="X3X4", ylab="Residuals")
+```
+```{r fig.height=4}
+par(mfrow=c(1,1))
+error.std <- rstandard(CP.reg)
+qqnorm(error.std, xlab="Normal Scores", ylab="Standardized Residuals", 
+       main="Normal Probability Plot")
+qqline(error.std, col="steelblue", lwd=2)
+```
+
+All the residuals plots do not seem to show any significant pattern. Some of them 
+have points concentrated on the left side near zero of the x-axis, but it is 
+caused by the differences of scale in the predictor variables. For example, 
+30 data points of $X_3$ are zero, so the two-factor interaction terms including
+$X_3$ will also have 30 zeros. The normal probability plot indicates that 
+the error terms are approximately normally distributed, slightly heavy-tailed.
+
+e-)
+```{r P4_e}
+bf.data <- data.frame(cbind(CP.data, ei, CP.reg$fitted.values))
+dimnames(bf.data)[[2]][6:7] <- c("residuals","fitted.values")
+bf.data1<-data.frame(cbind(
+  bf.data,ind=as.factor(I(bf.data$fitted.values<median(bf.data$fitted.values))*1)))
+g1 <- sum(bf.data1$ind=="1") # group 1: 40 cases
+g2 <- sum(bf.data1$ind=="0") # group 2: 41 cases
+bf.test(residuals~ind, data=bf.data1)
+```
+Following the Brown-Forsythe test result shown above, we conclude $H_0$ that
+the error variances are constant.

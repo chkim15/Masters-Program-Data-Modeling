@@ -1,0 +1,270 @@
+---
+title: "Assignment 9"
+author: "Chul Hee Kim"
+date: '2021 11 12 '
+output: pdf_document
+---
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+knitr::opts_chunk$set(ECHO=TRUE)
+options("scipen" = 10)
+
+loadLib = function(libName)
+{
+    if(require(libName, character.only=TRUE))
+    {
+        ##cat(libName, "loaded properly\n")
+    } else {
+        cat("Installing", libName, "\n")
+        install.packages(libName)
+        if(require(libName, character.only=TRUE))
+        {
+            cat(libName, "loaded properly\n")
+        } else {
+            stop(c(libName, "not properly installed\n"))
+        }
+    }
+}
+
+libs = c("ggplot2", "knitr", "MASS", "car", "onewaytests", "olsrr","ggpubr","dplyr", "Hmisc", "faraway", 
+         "rmarkdown", "markdown", "tidyr", "caret","kableExtra", "rpart", "rpart.plot", "lmtest", "Metrics", "GGally",
+         "adabag", "vcd", "randomForest","ipred","kernlab","vcd","gbm","C50","gmodels")
+
+for (lib in libs)
+{
+    loadLib(lib)
+}
+
+## Helper to get data sets from one location on hard drive
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+```
+
+## Problem 1
+
+a-)
+```{r P1_a1}
+data("uswages")
+head(uswages)
+str(uswages)
+
+uswages.sub <- uswages[,6:9]
+table(rowSums(uswages.sub)==1)
+```
+There are four categorical variables related to region, and we want to check if
+all of them are necessary. The result above tells us that the sum of every row
+of \emph{ne, mw, so, we} predictors is 1, which means that one of four variables
+should be removed. We will remove \emph{we} from \emph{uswages} dataset.
+
+```{r}
+uswages <- uswages[,-9] # remove 'we' variable
+
+f1 <- lm(wage ~ ., data=uswages)
+summary(f1)
+```
+The initial regression model including all predictors shows insignificant variables
+if $\alpha$=0.05, but it can be argued since their p-values are very close to 0.05. 
+$R^2$ is 0.2, which is not very good.
+
+```{r P1_a2}
+ols_step_both_p(f1, prem=0.05)
+k1 <- ols_step_best_subset(f1)
+k1
+plot(k1)
+```
+
+The stepwise regression selects five predictors, \emph{educ, exper, pt, smsa, race}.
+The best subset regression also selects the same five predictors since Model 5 
+shows the best results given by adjusted $R^2$, $C_p$, and AIC. Now, let's check
+the regression model assumptions.
+
+```{r P1_a3}
+f1a <- lm(wage ~ educ+exper+pt+smsa+race, data=uswages)
+summary(f1a)
+par(mfrow=c(2,2))
+plot(f1a)
+
+vif(f1a)
+
+dwtest(f1a)
+```
+
+The residuals against fitted values plot shows a slight cone shape, and the 
+scale-location plot shows $\sqrt{standardized residuals}$ increasing as the
+fitted values becomes larger. The QQ plot indicates that the error terms are
+approximately normally distributed but a little skewed right. All these plots
+indicate a few potential outliers.
+
+VIFs show no multicollinearity issue.
+
+Durbin-Watson test concludes that there is autocorrelation in the model.
+
+b-)
+```{r P1_b}
+f1b <- lm(log(wage) ~ educ+exper+pt+smsa+race, data=uswages)
+summary(f1b)
+
+ols_step_both_p(f1b, prem=0.05)
+
+f1b2 <- lm(log(wage) ~ educ+exper+pt+smsa+race, data=uswages)
+summary(f1b2)
+par(mfrow=c(2,2))
+plot(f1b2)
+
+vif(f1b2)
+
+dwtest(f1b2)
+```
+The residuals against fitted values plot no longer shows the cone shape, and the 
+scale-location plot shows the red horizontal line, which is improved from the
+previous model. The QQ plot indicates that the error terms are
+approximately normally distributed but still a little skewed right. All these plots
+still indicate a few potential outliers.
+
+VIFs show no multicollinearity issue.
+
+Durbin-Watson test concludes that there is now no autocorrelation in the model.
+
+$R^2$ is improved from 0.2 in part(a) to 0.38 in part(b), 
+so all the results mentioned above indicate that the log-transformed
+model is the one we would choose over the one in part(a).
+
+c-)
+```{r P1_c}
+f1tree <- rpart(wage ~ ., data=uswages)
+f1tree
+
+pred.tree <- predict(f1tree, uswages)
+summary(pred.tree)
+
+MAE <- function(actual, predicted) {mean(abs(actual - predicted))}
+SSE <- function(actual, predicted) {sum((actual - predicted)^2)}
+R2 <- function(actual, predicted) {sum((actual - predicted)^2) /((length(actual)-1)*var(actual))}
+
+mae.c <- MAE(uswages$wage, pred.tree)
+sse.c <- SSE(uswages$wage, pred.tree)
+r2.c <- 1-R2(uswages$wage, pred.tree)
+pred.c <- c(mae.c, sse.c, r2.c)
+```
+
+d-)
+```{r P1_d}
+f1tree.log <- rpart(log(wage) ~ ., data=uswages)
+f1tree.log
+
+pred.tree.log <- predict(f1tree.log, uswages)
+summary(pred.tree.log)
+
+mae.d <- MAE(uswages$wage, exp(pred.tree.log))
+sse.d <- SSE(uswages$wage, exp(pred.tree.log))
+r2.d <- 1-R2(uswages$wage, exp(pred.tree.log))
+pred.d <- c(mae.d, sse.d, r2.d)
+
+tbl <- cbind(pred.c, pred.d)
+colnames(tbl) <- c("Normal Tree", "Log-scaled Tree")
+rownames(tbl) <- c("MAE", "SSE", "Rsquared")
+kable(tbl, digits=3, align="c", caption="Comparison of Model Performance", 
+      booktabs=TRUE) %>% kable_styling(latex_options="HOLD_position")
+```
+
+The results are mixed as MAE is smaller for the log-scaled tree model, 
+$R^2$ is higher for the normal tree model,
+but the differences are very small. There is no definite winner here, but
+given similar performances, we would choose the normal tree model 
+because it is the simpler model and is easier to interpret. 
+
+e-)
+```{r P1_e}
+set.seed(1023)
+rf <- randomForest(wage ~ ., data = uswages)
+rf
+pred.rf <- predict(rf, uswages)
+mae.e <- MAE(uswages$wage, pred.rf)
+sse.e <- SSE(uswages$wage, pred.rf)
+r2.e <- 1-R2(uswages$wage, pred.rf)
+pred.e <- c(mae.e, sse.e, r2.e)
+```
+
+f-)
+```{r P1_f}
+set.seed(1023)
+bg <- ipred::bagging(wage ~ ., data = uswages, nbagg = 25)
+pred.bg <- predict(bg, uswages)
+mae.f <- MAE(uswages$wage, pred.bg)
+sse.f <- SSE(uswages$wage, pred.bg)
+r2.f <- 1-R2(uswages$wage, pred.bg)
+pred.f <- c(mae.f, sse.f, r2.f)
+```
+
+g-)
+```{r P1_g}
+set.seed(1023)
+bt <- gbm(wage ~ ., data = uswages)
+pred.bt <- predict(bt, uswages)
+mae.g <- MAE(uswages$wage, pred.bt)
+sse.g <- SSE(uswages$wage, pred.bt)
+r2.g <- 1-R2(uswages$wage, pred.bt)
+pred.g <- c(mae.g, sse.g, r2.g)
+
+# Comparison of all models
+tbl2 <- cbind(pred.c, pred.d, pred.e, pred.f, pred.g)
+colnames(tbl2) <- c("Normal Tree", "Log-scaled Tree", "Random Forest", "Bagging", "Boosting")
+rownames(tbl2) <- c("MAE", "SSE", "Rsquared")
+kable(tbl2, digits=3, align="c", caption="Comparison of Model Performance", 
+      booktabs=TRUE) %>% kable_styling(latex_options="HOLD_position")
+```
+The table above suggests that the random forest performs significantly better than all other models.
+
+
+## Problem 2
+
+a-)
+```{r P2_a}
+data("pima")
+head(pima)
+str(pima)
+
+pima$test <- as.factor(pima$test)
+set.seed(1023)
+train.index <- createDataPartition(y = pima$test, p = 0.9, list = FALSE)
+train.set <- pima[train.index,]
+test.set <- pima[-train.index,]
+
+f2t <- C5.0(train.set[,-9], train.set[,9])
+f2t
+summary(f2t)
+pred.f2t <- predict(f2t, train.set)
+CrossTable(train.set$test, pred.f2t, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+```
+
+b-)
+```{r P2_b}
+f2.svm <- ksvm(test ~ ., data = train.set, kernel = "vanilladot")
+f2.svm2 <- ksvm(test ~ ., data = train.set, kernel = "rbfdot")
+
+pred.svm <- predict(f2.svm, train.set)
+pred.svm2 <- predict(f2.svm2, train.set)
+
+CrossTable(train.set$test, pred.svm, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+CrossTable(train.set$test, pred.svm2, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+```
+We chose two of the most common kernels for our SVM, linear ("vanilladot") and Gaussian RBF kernel ("rbfdot").
+The error rate is 160/692 = 23.12% for the linear kernel and 129/692 = 18.64% for the Gaussian RBF kernel.
+It seems that the latter performs better.
+
+c-)
+```{r P2_c}
+pred.f2t.test <- predict(f2t, test.set)
+pred.svm.test <- predict(f2.svm, test.set)
+pred.svm2.test <- predict(f2.svm2, test.set)
+
+CrossTable(test.set$test, pred.f2t.test, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+CrossTable(test.set$test, pred.svm.test, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+CrossTable(test.set$test, pred.svm2.test, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual default', 'predicted default'))
+```
+The error rate is 16/76 = 21.05% for the tree model, 12/76 = 15.79% for SVM with the linear kernel, 11/76 = 14.47% 
+for SVM with the Gaussian RBF kernel. The difference between the two SVM models is marginal, but
+the RBF kernel model also performed better with the training data, so we would select the SVM 
+with the Gaussian RBF kernel as our final model.

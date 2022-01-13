@@ -1,0 +1,433 @@
+---
+title: 'Final Exam'
+author: "Chul Hee Kim"
+date: '2021 12 15 '
+output:
+  pdf_document: default
+---
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+knitr::opts_chunk$set(ECHO=TRUE)
+
+# STEP 1: Function to load or download libraries
+loadLib = function(libName)
+{
+    if(require(libName, character.only=TRUE))
+    {
+        ##cat(libName, "loaded properly\n")
+    } else {
+        cat("Installing", libName, "\n")
+        install.packages(libName)
+        if(require(libName, character.only=TRUE))
+        {
+            cat(libName, "loaded properly\n")
+        } else {
+            stop(c(libName, "not properly installed\n"))
+        }
+    }
+}
+
+libs = c("ggplot2", "knitr", "MASS", "car", "onewaytests", "olsrr","ggpubr","dplyr", "Hmisc", "faraway","forecast", 
+         "rmarkdown", "markdown", "tidyr", "caret","kableExtra", "rpart", "rpart.plot", "lmtest", "Metrics","kernlab",      
+         "GGally","visdat","e1071","adabag", "vcd", "randomForest","ggcorrplot","mboost","party","neuralnet",
+         "HoRM","Hmisc","orcutt","ResourceSelection","fastDummies","glmnet","ipred","boot")
+
+for (lib in libs)
+{
+    loadLib(lib)
+}
+
+## Helper to get data sets from one location on hard drive
+getDataSet <- function(dataset) {
+  datasets.loc <- "/cloud/project/Data/"
+  read.csv(paste0(datasets.loc,dataset,sep=""))
+}
+## Helper to display regression function with n coefficients
+## If var.names = TRUE add a space and "*" symbol to make readable
+dispRegFunc <- function(reg, var.names=FALSE, pdfWrap=0, signif=6) {
+
+  ## Set the line wrapping only if this is being knit as a pdf
+  line.limit <- 0
+  if (!is.null(knitr::current_input())) {
+    if("pdf_document" %in% rmarkdown::all_output_formats(knitr::current_input())) {
+       line.limit <- pdfWrap
+    }
+  }
+  ## Check to see if this is a cv.glmnet object or a lm or rlm object
+  ifelse(class(reg) == "cv.glmnet",
+         coefs <- predict(reg, s=reg$lambda.min, type="coefficients")[,1],
+         coefs <- reg$coefficients)
+  
+  b0 = coefs[1]
+  n <- length(coefs)
+  my_formula <- paste0("Y = ", round(b0, digits = signif))
+  for (i in 2:n) {
+    ## Choose the +/- sign for the coefficient then remove it using abs()
+    new.formula.term <- paste0(ifelse(coefs[i] < 0," - "," + "),
+                         signif(abs(coefs[i]),signif),
+                         ifelse(var.names,paste0(" * ",names(coefs)[i]),
+                         names(coefs)[i]))
+    if (line.limit > 0) {
+      if (line.limit <= nchar(my_formula) + nchar(new.formula.term)) {
+        print(my_formula)
+        my_formula <- new.formula.term
+      } else {
+        my_formula <- paste0(my_formula, new.formula.term)
+      }
+    }
+    else {
+      my_formula <- paste0(my_formula, new.formula.term)
+    }
+  }
+  print(my_formula)
+}
+
+## Helper function to calculate R2, RMSE, and MAE using the 1-SSE/SST method of R2
+## instead of the postResample() method of squaring the correlation coefficient.
+resampleMetrics <- function(pred, obs) {
+	t(c(R2=caret::R2(pred, obs, formula = "traditional"),postResample(pred,obs)[-2]))
+}
+set.seed(123)
+options("scipen" = 10)  ##Used to avoid displaying numbers such as 1+e3 (exponent), changing the options
+
+## Function to calculate the optimal Cp for pruning
+getBestCp <- function(full_tree) {
+  ## Get the cp (complexity parameter) table for the full tree
+  cptable <- full_tree$cptable
+  nsplit <- nrow(cptable)
+  ## Get the minimum value of xerror (we want to choose the xerror within 1 STD 
+  ## of the minimum xerror with the the lowest nsplit value)
+  min.xerror <- which.min(full_tree$cptable[, 4]) 
+  for(i in 1:nsplit) {
+    ## Return the first value within 1 STD of the minimum xerror,
+    ## which will have the lowest nsplit due loop order
+    if(cptable[i, 4] < cptable[min.xerror, 4] + cptable[min.xerror, 5]) return(cptable[i, 1])
+  }
+  ## Didn't find anything, return the full tree
+  return(cptable[nsplit, 1])
+}
+```
+## Question 1
+
+Use the "Boston Housing" data set. Below are the data and variable descriptions:
+
+Variable Information:
+
+Number of Attributes: 13 continuous variables, and 1 binary-valued variable.
+
+CRIM: per capita crime rate by town\newline
+ZN: proportion of residential land zoned for lots over 25,000 sq.ft.\newline
+INDU: proportion of non-retail business acres per town\newline
+CHAS: Charles River dummy variable (= 1 if tract bounds river; 0 otherwise)\newline
+NOX: nitric oxides concentration (parts per 10 million)\newline
+RM: average number of rooms per dwelling\newline
+AGE: proportion of owner-occupied units built prior to 1940\newline
+DIS: weighted distances to five Boston employment centres\newline
+RAD: index of accessibility to radial highways\newline
+TAX: full-value property-tax rate per $10,000\newline
+PTRATIO: pupil-teacher ratio by town\newline
+B: 1000(Bk - 0.63)^2 where Bk is the proportion of blacks by town\newline
+LSTAT: % lower status of the population\newline
+MEDV: Median value of owner-occupied homes in $1000's\newline
+
+(65 points)
+
+a-) Use "set.seed(2546)" to create development sample (70% of the data) and hold-out sample (30% of the data). (5 points)
+
+We first start examining the dataset and find out that there is no missing value.
+We notice that 'CHAS' is a categorical variable with 0 and 1, so there is no issue there,
+and 'RAD' looks like a categorical variable, but since it is described as an 
+index of accessibility, we regard its values actually have numerical meanings. 
+
+```{r}
+housing <- getDataSet("Boston_Housing_Data.csv")
+str(housing)
+head(housing)
+
+apply(housing,2,function(x) sum(is.na(x)))
+table(housing$CHAS)
+table(housing$RAD)
+
+set.seed(2546)
+train_index <- createDataPartition(y = housing$CRIM, p = 0.7, list = FALSE)
+train_set <- housing[train_index,]
+test_set <- housing[-train_index,]
+```
+
+b-) Built a regression model  to predict Crime Rate (CRIM) on the development sample by using all the variables. Do we need to transform CRIM? If so, transform the CRIM and redo the regression model. (5 points)
+
+```{r}
+f1 <- lm(CRIM ~ ., data=train_set)
+summary(f1)
+par(mfrow=c(2,2))
+plot(f1)
+shapiro.test(f1$residuals)
+```
+
+The regression model gives us $R^2$ of 41.06%, and 'DIS', 'RAD', 'MEDV' are 
+indicated as significant. The QQ plot and the Shapiro-Wilk test show that the 
+error terms are not normally distributed. The Breuch-Pagan test indicates that
+the errors do not have constant variance. Therefore, we need the transformation on
+the response variable, and the Box-Cox procedure below suggests the log transformation.
+After the log transformation, the QQ plot is approximately normally distributed,
+the residual vs fitted values plot also improved a lot and looks more constant.
+
+```{r}
+bc <-boxcox(f1, lambda=seq(-1,1,0.025))
+lambda <- bc$x[which.max(bc$y)]
+lambda
+
+f1_log <- lm(log(CRIM) ~ ., data=train_set)
+summary(f1_log)
+par(mfrow=c(2,2))
+plot(f1_log)
+```
+
+c-) Use stepwise (both ways) model selection to select the best model for predicting the transformed CRIM on the development sample. **Ensure that all variables are significant, use $\alpha=0.05$. Justify your choice of model. Check all the regression model assumptions visually from the graphs. Perform a statistical test for auto correlation.There could be potential outliers in the model. Build a robust regression model by using the same variables in your final model and compare your regression model and outputs with the best model. Do you see a significant impact of outliers? Please discuss your findings** (15 points)
+
+```{r}
+ols_step_both_p(f1_log, prem=0.05)
+f1_best <- lm(log(CRIM) ~ RAD+NOX+ZN+AGE+B+INDUS, data=train_set)
+summary(f1_best)
+par(mfrow=c(2,2))
+plot(f1_best)
+shapiro.test(f1_best$residuals)
+
+# Robust regression
+rr.huber <- rlm(log(CRIM) ~ RAD+NOX+ZN+AGE+B+INDUS, data = train_set, psi = psi.huber)
+summary(rr.huber)
+
+# Check autocorrelation
+dwtest(f1_best)
+f1_auto <- cochrane.orcutt(f1_best)
+dwtest(f1_auto)
+```
+
+The stepwise both way model selects 'RAD','NOX','ZN','AGE','B', and 'INDUS' as 
+predictors, and the summary of the model shows that all variables are significant.
+The residual vs fitted values plot shows constant variances of error terms, and
+the QQ plot shows the error are approximately normally distributed as well as 
+the Shapiro-Wilk test. The coefficients of the robust regression model are quite
+close to our best model, which indicates that the outliers do not have significant
+impact. But, the Durbin-Watson test shows that there is autocorrelation, so we
+used the Cochrane-Orcutt method to remediate this issue, and finally we removed 
+the autocorrelation as shown above. 
+
+d-) Use regression Tree to predict the CRIM on the development sample and compare the  performance of tree against the regression model built in part c on development sample. (10 points) 
+
+```{r}
+f1tree <- rpart(CRIM ~ ., data=train_set)
+rpart.plot(f1tree, digits=3)
+resampleMetrics(predict(f1tree, train_set), train_set$CRIM) # Regression Tree
+resampleMetrics(exp(predict(f1_best, train_set)), train_set$CRIM) # Stepwise
+```
+
+The regression tree has a higher $R^2$ and lower RMSE/MAE, so for now, the 
+regression tree seems to be a better model.
+
+e-) Use Neuron Network (NN) with two hidden layers with 5 neurons (hidden=c(5,5)) to predict the CRIM on the development sample and compare the  performance of NN the regression model built in part c on development sample. (10 points)
+
+```{r}
+normalize <- function(x) {return((x - min(x)) / (max(x) - min(x)))}
+housing_norm <- as.data.frame(lapply(housing, normalize))
+train_norm <- housing_norm[train_index,]
+test_norm <- housing_norm[-train_index,]
+NN <- neuralnet(CRIM ~ ., hidden=c(5,5), train_norm)
+plot(NN, rep="best")
+NN_result <- compute(NN, train_norm[,-c(1)])
+denormalize <- function(x) {return((x * (max(housing$CRIM) - min(housing$CRIM))) + min(housing$CRIM))}
+pred_NN <- denormalize(NN_result$net.result)
+
+resampleMetrics(pred_NN, train_set$CRIM) # Neural Network
+resampleMetrics(exp(predict(f1_best, train_set)), train_set$CRIM) # Stepwise
+```
+
+The neural network significantly outperforms with very high $R^2$ and lower RMSE/MAE.
+
+f-) Use lasso regression to predict the CRIM on the development sample and compare the performance of lasso against the regression model built in part c on development sample. (10 points)
+
+```{r}
+x <- model.matrix(CRIM~., train_set)[,-c(1)]
+y <- train_set$CRIM
+LassoMod <- glmnet(x, y, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+CvLassoMod <- cv.glmnet(x, y, alpha=1, nlambda=100,lambda.min.ratio=0.0001)
+plot(CvLassoMod)
+best.lambda.lasso <- CvLassoMod$lambda.min
+pred.lasso <- coef(CvLassoMod, s = "lambda.min")
+pred.lasso
+yhat.lasso <- predict(LassoMod, s = best.lambda.lasso, newx = x)
+
+resampleMetrics(yhat.lasso, train_set$CRIM) # Lasso
+resampleMetrics(exp(predict(f1_best, train_set)), train_set$CRIM) # Stepwise
+```
+
+The Lasso regression has a higher $R^2$ and lower RMSE. MAE is bigger, but we would
+still choose the lasso regression over the one from part(c).
+
+g-) Evaluate the performances of models built in part c (use the model selected based on the stepwise model procedure) through part f on hold-out sample. Compare the SSEs, $R^2$ and select the best model. (10 points)
+
+```{r}
+SSE <- function(actual, predicted) {sum((actual - predicted)^2)}
+
+# Stepwise from part(c)
+resampleMetrics(exp(predict(f1_best, test_set)), test_set$CRIM)
+SSE(exp(predict(f1_best, test_set)), test_set$CRIM)
+
+# Regression Tree
+resampleMetrics(predict(f1tree, test_set), test_set$CRIM)
+SSE(predict(f1tree, test_set), test_set$CRIM)
+
+# Neural Network
+set.seed(2546)
+NN_result <- compute(NN, test_norm[,-c(1)])
+pred_NN <- denormalize(NN_result$net.result)
+resampleMetrics(pred_NN, test_set$CRIM)
+SSE(pred_NN, test_set$CRIM)
+
+# Lasso
+x2 <- model.matrix(CRIM~., test_set)[,-c(1)]
+yhat.lasso <- predict(LassoMod, s = best.lambda.lasso, newx = x2)
+resampleMetrics(yhat.lasso, test_set$CRIM)
+SSE(yhat.lasso, test_set$CRIM)
+```
+
+Based on the SSE and $R^2$, we choose the neural network since it has the 
+highest $R^2$ and lowest SSE.
+
+## Question 2
+
+Use biopsy data sets in the MASS package. Copy and paste and following code "library(MASS);data(biopsy,package = "MASS")". 
+
+**the first variable is the ID variable and you need to drop it from the data**
+
+There are 699 cases of potentially cancerous tumors of which 241 are actually malignant.  The response variable class shows if tumor is malignant or not (0 if malignant, 1 if benign). 
+(20 points, 5 points each)
+
+a-) Fit a regression model to predict Class and comment on your model. Can we drop $V2$ and $V9$?
+
+We dropped the first column 'ID', and since 'V6' has missing values, we dropped them
+by rows.
+
+```{r}
+data(biopsy)
+biopsy <- biopsy[,-1]
+str(biopsy)
+head(biopsy)
+
+apply(biopsy,2,function(x) sum(is.na(x))) 
+biopsy2 <- na.omit(biopsy)
+biopsy2[,10] <- ifelse(biopsy2[,10]=="benign",1,0)
+
+f2 <- glm(class ~ ., family=binomial, data=biopsy2)
+summary(f2)
+
+f2r <- glm(class ~ V1+V3+V4+V5+V6+V7+V8, family=binomial, data=biopsy2)
+anova(f2r, f2, test="Chi")
+```
+Since the response variable is categorical and binary, we fit the logistic regression model.
+'V1','V4','V6', and 'V7' are indicated as significant. The ANOVA table above 
+shows the p-value of 0.1518, so we accept the null hypothesis that 'V2' and 'V9'
+can be dropped.
+
+b-) Perform variable selection (use step function with using stepwise both direction method). (Hint: Use the step function.) **Ensure that all variables are significant, use $\alpha=0.05$.** 
+
+```{r}
+f2_step <- step(f2, direction="both", trace=0)
+summary(f2_step)
+drop1(f2_step, test="Chi")
+```
+
+The stepwise both direction method dropped 'V2' and 'V5', but it kept 'V9', which
+has the p-value of 0.10. We test this model with 'drop1' function and see that
+'V9' is not dropped based on the Chisquare test, so we will keep it in the model.
+All variables are indicated as significant.
+
+c-) Conduct the Hosmer-Lemeshow goodness of fit test for the appropriateness of the logistic regression function by forming four groups. State the alternatives, decision rule, and conclusion. 
+
+```{r}
+hoslem.test(f2_step$y, fitted(f2_step), g=4)
+```
+
+$H_0$: The model is a good fit. \
+$H_a$: The model is not a good fit.
+
+The p-value of the test above is 0.245, which is greater than the significance level,
+0.05, so we accept the null hypothesis that the model is a good fit.
+
+d-) What is the estimated probability of having a malignant tumor based on the data below?  Copy and paste the code below on r. 
+
+```{r}
+test.dat<-data.frame(matrix(c(4 ,2,1,1,2,1,2,1,1,8,7,5,10,7,9,5,5,4,6 ,1,1,1,2,1,3,1,1),byrow=T,nrow=3,ncol=9))
+dimnames(test.dat)[[2]]<-c("V1","V2","V3","V4","V5","V6","V7","V8","V9")
+
+pred <- predict(f2_step, test.dat, type="link", se.fit = TRUE)
+inv.logit(pred$fit)
+```
+The estimated probabilities of having malignant tumor are shown above. Since we set
+0 as malignant, the predicted value closer to 0 means a higher chance of having a
+malignant tumor. Closer to 1 means benign.
+
+
+## Question 3
+
+Use dvisits data sets in the faraway package. Copy and paste and following code "library(faraway);data(dvisits,package = "faraway")". dvisits. The depdent variable is doctorco which is Number of consultations with a doctor or specialist in the past 2 weeks. You can "help(dvisits)" command in R to see data describtions of the reamining variables. 
+
+The response variable is doctorco and there are 8 independent variables. pollib is the only categorical variable in the data set.
+
+(15 points, 5 points each)
+
+a-) Fit a regression model with the doctorco variable as the response and all other variables except **nonpresc, and nondocco (use "dvisits[-c(14,19)]"  to drop these variables in R)** are predictors (dummy variables are already created,use the data as it is). Is the model significant?
+
+```{r}
+data(dvisits)
+str(dvisits)
+head(dvisits)
+
+apply(dvisits,2,function(x) sum(is.na(x))) 
+
+dvisits2 <- dvisits[-c(14,19)]
+f3 <- glm(doctorco ~ ., family=poisson, data=dvisits2)
+summary(f3)
+```
+
+There is no missing value. We fit the poisson regression model since the response 
+variable is count data.
+'sex','freepoor','illness','hospadmi','medicine','prescrib' are indicated as 
+significant variables. The model is significant because the residual deviance of
+4,246.4 is reduced by 1,388.4 from the null deviance of 5,634.8.
+
+b-) Perform variable selection (Hint: Use the step function.) **Ensure that all variables are significant, use $\alpha=0.05$.**  Calculate the SSE for the model.
+
+```{r}
+f3_step <- step(f3, direction="both", trace=0)
+summary(f3_step)
+drop1(f3_step, test="Chi")
+f3_best <- glm(doctorco ~ sex+freepoor+illness+actdays+hospadmi+medicine+prescrib, 
+               family=poisson, data=dvisits2)
+summary(f3_best)
+SSE(dvisits2$doctorco, predict(f3_best, dvisits2))
+```
+
+After we use the step function for the variable selection, we still see that 
+'hscore' and 'chcond1' as insignificant variables with p-value over 0.05. 
+Even after using drop1 function, those two variables are indicated as insignificant,
+so we manually dropped them. The final model has all variables as significant,
+and the SSE = 19,383.82.
+
+c-) Use regression tree approach to predict the doctorco and calculate SSE and compare it against SSE in part b. which model would you choose?
+
+```{r}
+f3tree <- rpart(doctorco ~ ., data=dvisits2)
+rpart.plot(f3tree, digits=3)
+SSE(dvisits2$doctorco, predict(f3tree, dvisits2))
+```
+
+The SSE for the regression tree is 2,450.206, which is smaller than the SSE from part(b),
+so we would choose the regression tree model.
+
+
+
+
+
+
+
